@@ -1,0 +1,78 @@
+// HOCON Grammar for Pest
+// Based on: https://github.com/lightbend/config/blob/main/HOCON.md
+
+hocon        = { SOI ~ SEP_OPT ~ root_content? ~ SEP_OPT ~ EOI }
+root_content = { object | array | object_body }
+
+// ====== Whitespace and Comments ======
+NEWLINE           = _{ "\n" }
+WHITESPACE        = _{ "\t" | "\u{000b}" | "\u{000c}" | "\r" | "\u{001c}" | "\u{001d}" | "\u{001e}" | "\u{001f}" | " " | "\u{2007}" | "\u{202f}" | "\u{feff}" }
+COMMENT           = _{ ("#" | "//") ~ (!NEWLINE ~ ANY)* }
+SEP               = @{
+    ((WHITESPACE | COMMENT | NEWLINE)* ~ "," ~ (WHITESPACE | COMMENT | NEWLINE)*)
+  | ((WHITESPACE | COMMENT)* ~ NEWLINE ~ (WHITESPACE | COMMENT | NEWLINE)*)
+}
+SEP_OPT           = _{ (WHITESPACE | COMMENT | NEWLINE | ",")* }
+WHITESPACE_INLINE = _{ (WHITESPACE | COMMENT)* }
+
+// ====== Core Value Types ======
+
+value         =  { value_element ~ (WHITESPACE_INLINE ~ value_element)* }
+value_element = _{ object | array | substitution | literal_value }
+literal_value =  { boolean | null | number | string | value_unquoted_string }
+
+// ====== Object ======
+object        = { "{" ~ SEP_OPT ~ object_body? ~ SEP_OPT ~ "}" }
+object_body   = { object_entry ~ (SEP ~ object_entry)* ~ SEP_OPT }
+object_entry  = { include | field }
+field         = { field_key ~ assignment ~ field_value }
+field_key     = { key_component ~ (WHITESPACE_INLINE ~ "." ~ WHITESPACE_INLINE ~ key_component)* }
+key_component = { string | key_unquoted_string }
+
+// Assignment operators - Allows newlines after separator
+assignment  = { WHITESPACE_INLINE ~ separator ~ SEP_OPT }
+separator   = { ":" | "=" | "+=" }
+field_value = { value }
+
+// ====== Array ======
+array         = { "[" ~ SEP_OPT ~ array_body? ~ SEP_OPT ~ "]" }
+array_body    = { array_element ~ (SEP ~ array_element)* ~ SEP_OPT }
+array_element = { value }
+
+// ====== Strings ======
+string                     =  { quoted_string | triple_quoted_string }
+quoted_string              = @{ "\"" ~ inner_quoted_string* ~ "\"" }
+inner_quoted_string        = _{ escape_sequence | (!("\"" | "\\") ~ ANY) }
+triple_quoted_string       = @{ "\"\"\"" ~ inner_triple_quoted_string* ~ "\"\"\"" }
+inner_triple_quoted_string = _{ escape_sequence | (!"\"\"\"" ~ ANY) }
+escape_sequence            = _{ "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" | unicode_escape) }
+unicode_escape             = _{ "u" ~ ASCII_HEX_DIGIT{4} }
+
+key_unquoted_string   = @{ key_unquoted_char+ }
+key_unquoted_char     = _{ !("//") ~ !("$" | "\"" | "{" | "}" | "[" | "]" | ":" | "=" | "+=" | "," | "#" | "`" | "^" | "?" | "!" | "@" | "*" | "&" | "\\" | "." | WHITESPACE | NEWLINE | COMMENT) ~ ANY }
+value_unquoted_string = @{ value_unquoted_char+ }
+value_unquoted_char   = _{ !("//") ~ !("$" | "\"" | "{" | "}" | "[" | "]" | ":" | "=" | "+=" | "," | "#" | "`" | "^" | "?" | "!" | "@" | "*" | "&" | "\\" | WHITESPACE | NEWLINE | COMMENT) ~ ANY }
+
+// ====== Numbers ======
+number = @{ MINUS? ~ int ~ frac? ~ exp? }
+int    = _{ "0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
+frac   = _{ "." ~ ASCII_DIGIT+ }
+exp    = _{ ("e" | "E") ~ (PLUS | MINUS)? ~ ASCII_DIGIT+ }
+MINUS  = _{ "-" }
+PLUS   = _{ "+" }
+
+// ====== Booleans ======
+boolean = @{ ("true" | "false" | "yes" | "no" | "on" | "off") ~ &(!value_unquoted_char) }
+
+// ====== Null ======
+null = @{ "null" ~ &(!value_unquoted_char) }
+
+// ====== Substitutions ======
+substitution    =  { "${" ~ optional_q? ~ WHITESPACE_INLINE ~ path_expression ~ WHITESPACE_INLINE ~ "}" }
+optional_q      = _{ "?" }
+path_expression =  { key_component ~ (WHITESPACE_INLINE ~ "." ~ WHITESPACE_INLINE ~ key_component)* }
+
+// ====== Includes ======
+include          =  { "include" ~ (quoted_string | include_function) }
+include_function =  { include_keyword ~ WHITESPACE_INLINE ~ "(" ~ WHITESPACE_INLINE ~ quoted_string ~ WHITESPACE_INLINE ~ ")" }
+include_keyword  = @{ "file" | "url" | "classpath" | "required" }
