@@ -1,8 +1,8 @@
 // HOCON Grammar for Pest
 // Based on: https://github.com/lightbend/config/blob/main/HOCON.md
 
-hocon        =  { SOI ~ SEP_OPT ~ root_content? ~ SEP_OPT ~ EOI }
-root_content = _{ object | array | object_body }
+hocon        = { SOI ~ SEP_OPT ~ root_content? ~ SEP_OPT ~ EOI }
+root_content = { object | array | object_body }
 
 // ====== Whitespace and Comments ======
 NEWLINE           = _{ "\n" }
@@ -24,14 +24,13 @@ value_element = _{ object | array | substitution | boolean | null | number | str
 object        = { "{" ~ SEP_OPT ~ object_body? ~ SEP_OPT ~ "}" }
 object_body   = { object_entry ~ (SEP ~ object_entry)* ~ SEP_OPT }
 object_entry  = { include | field }
-field         = { field_key ~ assignment ~ field_value }
+field         = { field_key ~ assignment ~ value }
 field_key     = { key_component ~ (WHITESPACE_INLINE ~ "." ~ WHITESPACE_INLINE ~ key_component)* }
 key_component = { string | key_unquoted_string }
 
 // Assignment operators - Allows newlines after separator
-assignment  = { WHITESPACE_INLINE ~ separator ~ SEP_OPT }
-separator   = { ":" | "=" | "+=" }
-field_value = { value }
+assignment = { WHITESPACE_INLINE ~ separator ~ SEP_OPT }
+separator  = { ":" | "=" | "+=" }
 
 // ====== Array ======
 array         = { "[" ~ SEP_OPT ~ array_body? ~ SEP_OPT ~ "]" }

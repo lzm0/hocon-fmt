@@ -5,29 +5,86 @@ use pest_derive::Parser;
 #[grammar = "hocon.pest"]
 pub struct HoconParser;
 
-fn main() {
-    let file_path = std::env::args().nth(1).expect("File path missing");
-    let content = std::fs::read_to_string(file_path).unwrap();
+pub fn format_hocon(input: &str) -> Result<String, pest::error::Error<Rule>> {
+    let parsed = HoconParser::parse(Rule::hocon, input)?;
+    let mut formatted = String::new();
 
-    let parse_result = HoconParser::parse(Rule::hocon, &content);
-    match parse_result {
-        Ok(pairs) => {
-            pairs.for_each(|pair| format_pair(pair));
+    for pair in parsed {
+        format_pair(pair, &mut formatted, 0);
+    }
+    Ok(formatted)
+}
+
+fn format_pair(pair: pest::iterators::Pair<Rule>, output: &mut String, indent: usize) {
+    match pair.as_rule() {
+        Rule::hocon => {
+            for inner_pair in pair.into_inner() {
+                format_pair(inner_pair, output, indent);
+            }
         }
-        Err(e) => {
-            println!("{}", e);
-            std::process::exit(1);
+        Rule::object => {
+            output.push_str("{\n");
+            for inner_pair in pair.into_inner() {
+                format_pair(inner_pair, output, indent + 2);
+            }
+            output.push_str(&" ".repeat(indent));
+            output.push_str("}\n");
         }
+        Rule::array => {
+            output.push_str("[\n");
+            for inner_pair in pair.into_inner() {
+                format_pair(inner_pair, output, indent + 2);
+            }
+            output.push_str(&" ".repeat(indent));
+            output.push_str("]\n");
+        }
+        Rule::field => {
+            let mut inner_rules = pair.into_inner();
+            let key = inner_rules.next().unwrap().as_str();
+            let separator = inner_rules.next().unwrap().as_str().trim();
+            output.push_str(&" ".repeat(indent));
+            output.push_str(key);
+            output.push_str(&format!(" {} ", separator));
+            format_pair(inner_rules.next().unwrap(), output, indent);
+        }
+        Rule::value => {
+            for inner_pair in pair.into_inner() {
+                format_pair(inner_pair, output, indent);
+            }
+        }
+        Rule::string | Rule::number | Rule::boolean | Rule::null | Rule::value_unquoted_string => {
+            output.push_str(pair.as_str());
+            output.push('\n');
+        }
+        Rule::object_body
+        | Rule::array_body
+        | Rule::object_entry
+        | Rule::array_element
+        | Rule::root_content => {
+            for inner_pair in pair.into_inner() {
+                format_pair(inner_pair, output, indent);
+            }
+        }
+        Rule::substitution => {
+            output.push_str(pair.as_str());
+            output.push('\n');
+        }
+        Rule::include => {
+            output.push_str(&" ".repeat(indent));
+            output.push_str(pair.as_str());
+            output.push('\n');
+        }
+        Rule::EOI => {}
+        _ => eprintln!("Unexpected rule: {:?}", pair.as_rule()),
     }
 }
 
-fn format_pair(pair: pest::iterators::Pair<Rule>) {
-    for inner_pair in pair.into_inner() {
-        match inner_pair.as_rule() {
-            _ => {
-                println!("{:?}", inner_pair.as_str());
-                format_pair(inner_pair);
-            }
-        }
+fn main() {
+    let file_path = std::env::args().nth(1).expect("File path missing");
+    let input = std::fs::read_to_string(file_path).unwrap();
+
+    match format_hocon(&input) {
+        Ok(formatted) => println!("{}", formatted),
+        Err(e) => eprintln!("Parsing error: {}", e),
     }
 }
