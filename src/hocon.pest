@@ -1,8 +1,8 @@
 // HOCON Grammar for Pest
 // Based on: https://github.com/lightbend/config/blob/main/HOCON.md
 
-hocon        = { SOI ~ SEP_OPT ~ root_content? ~ SEP_OPT ~ EOI }
-root_content = { object | array | object_body }
+hocon        =  { SOI ~ SEP_OPT ~ root_content? ~ SEP_OPT ~ EOI }
+root_content = _{ object | array | object_body }
 
 // ====== Whitespace and Comments ======
 NEWLINE           = _{ "\n" }
@@ -18,8 +18,7 @@ WHITESPACE_INLINE = _{ (WHITESPACE | COMMENT)* }
 // ====== Core Value Types ======
 
 value         =  { value_element ~ (WHITESPACE_INLINE ~ value_element)* }
-value_element = _{ object | array | substitution | literal_value }
-literal_value =  { boolean | null | number | string | value_unquoted_string }
+value_element = _{ object | array | substitution | boolean | null | number | string | value_unquoted_string }
 
 // ====== Object ======
 object        = { "{" ~ SEP_OPT ~ object_body? ~ SEP_OPT ~ "}" }
@@ -40,11 +39,11 @@ array_body    = { array_element ~ (SEP ~ array_element)* ~ SEP_OPT }
 array_element = { value }
 
 // ====== Strings ======
-string                     =  { quoted_string | triple_quoted_string }
+string                     =  { triple_quoted_string | quoted_string }
 quoted_string              = @{ "\"" ~ inner_quoted_string* ~ "\"" }
 inner_quoted_string        = _{ escape_sequence | (!("\"" | "\\") ~ ANY) }
 triple_quoted_string       = @{ "\"\"\"" ~ inner_triple_quoted_string* ~ "\"\"\"" }
-inner_triple_quoted_string = _{ escape_sequence | (!"\"\"\"" ~ ANY) }
+inner_triple_quoted_string = _{ !"\"\"\"" ~ ANY }
 escape_sequence            = _{ "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" | unicode_escape) }
 unicode_escape             = _{ "u" ~ ASCII_HEX_DIGIT{4} }
 
