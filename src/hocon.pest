@@ -27,10 +27,7 @@ object_entry  = { include | field }
 field         = { field_key ~ assignment ~ value }
 field_key     = { key_component ~ (WHITESPACE_INLINE ~ "." ~ WHITESPACE_INLINE ~ key_component)* }
 key_component = { string | key_unquoted_string }
-
-// Assignment operators - Allows newlines after separator
-assignment = { WHITESPACE_INLINE ~ separator ~ SEP_OPT }
-separator  = { ":" | "=" | "+=" }
+assignment    = { WHITESPACE_INLINE ~ (":" | "=" | "+=") ~ SEP_OPT }
 
 // ====== Array ======
 array         = { "[" ~ SEP_OPT ~ array_body? ~ SEP_OPT ~ "]" }
@@ -52,12 +49,10 @@ value_unquoted_string = @{ value_unquoted_char+ }
 value_unquoted_char   = _{ !("//") ~ !("$" | "\"" | "{" | "}" | "[" | "]" | ":" | "=" | "+=" | "," | "#" | "`" | "^" | "?" | "!" | "@" | "*" | "&" | "\\" | WHITESPACE | NEWLINE | COMMENT) ~ ANY }
 
 // ====== Numbers ======
-number = @{ MINUS? ~ int ~ frac? ~ exp? }
+number = @{ "-"? ~ int ~ frac? ~ exp? }
 int    = _{ "0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
 frac   = _{ "." ~ ASCII_DIGIT+ }
-exp    = _{ ("e" | "E") ~ (PLUS | MINUS)? ~ ASCII_DIGIT+ }
-MINUS  = _{ "-" }
-PLUS   = _{ "+" }
+exp    = _{ ("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+ }
 
 // ====== Booleans ======
 boolean = @{ ("true" | "false" | "yes" | "no" | "on" | "off") ~ &(!value_unquoted_char) }
