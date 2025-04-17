@@ -4,10 +4,10 @@
 hocon        = { SOI ~ SEP_OPT ~ root_content? ~ SEP_OPT ~ EOI }
 root_content = { object | array | object_body }
 
-// ====== Whitespace and Comments ======
+// Whitespace and Comments
 NEWLINE           = _{ "\n" }
 WHITESPACE        = _{ "\t" | "\u{000b}" | "\u{000c}" | "\r" | "\u{001c}" | "\u{001d}" | "\u{001e}" | "\u{001f}" | " " | "\u{2007}" | "\u{202f}" | "\u{feff}" }
-COMMENT           = _{ ("#" | "//") ~ (!NEWLINE ~ ANY)* }
+COMMENT           =  { ("#" | "//") ~ (!NEWLINE ~ ANY)* }
 SEP               = @{
     ((WHITESPACE | COMMENT | NEWLINE)* ~ "," ~ (WHITESPACE | COMMENT | NEWLINE)*)
   | ((WHITESPACE | COMMENT)* ~ NEWLINE ~ (WHITESPACE | COMMENT | NEWLINE)*)
@@ -15,12 +15,12 @@ SEP               = @{
 SEP_OPT           = _{ (WHITESPACE | COMMENT | NEWLINE | ",")* }
 WHITESPACE_INLINE = _{ (WHITESPACE | COMMENT)* }
 
-// ====== Core Value Types ======
+// Core Value Types
 
 value         =  { value_element ~ (WHITESPACE_INLINE ~ value_element)* }
 value_element = _{ object | array | substitution | boolean | null | number | string | value_unquoted_string }
 
-// ====== Object ======
+// Object
 object        = { "{" ~ SEP_OPT ~ object_body? ~ SEP_OPT ~ "}" }
 object_body   = { object_entry ~ (SEP ~ object_entry)* ~ SEP_OPT }
 object_entry  = { include | field }
@@ -29,12 +29,12 @@ field_key     = { key_component ~ (WHITESPACE_INLINE ~ "." ~ WHITESPACE_INLINE ~
 key_component = { string | key_unquoted_string }
 assignment    = { WHITESPACE_INLINE ~ (":" | "=" | "+=") ~ SEP_OPT }
 
-// ====== Array ======
+// Array
 array         = { "[" ~ SEP_OPT ~ array_body? ~ SEP_OPT ~ "]" }
 array_body    = { array_element ~ (SEP ~ array_element)* ~ SEP_OPT }
 array_element = { value }
 
-// ====== Strings ======
+// Strings
 string                     =  { triple_quoted_string | quoted_string }
 quoted_string              = @{ "\"" ~ inner_quoted_string* ~ "\"" }
 inner_quoted_string        = _{ escape_sequence | (!("\"" | "\\") ~ ANY) }
@@ -48,24 +48,24 @@ key_unquoted_char     = _{ !("//") ~ !("$" | "\"" | "{" | "}" | "[" | "]" | ":" 
 value_unquoted_string = @{ value_unquoted_char+ }
 value_unquoted_char   = _{ !("//") ~ !("$" | "\"" | "{" | "}" | "[" | "]" | ":" | "=" | "+=" | "," | "#" | "`" | "^" | "?" | "!" | "@" | "*" | "&" | "\\" | WHITESPACE | NEWLINE | COMMENT) ~ ANY }
 
-// ====== Numbers ======
+// Numbers
 number = @{ "-"? ~ int ~ frac? ~ exp? }
 int    = _{ "0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
 frac   = _{ "." ~ ASCII_DIGIT+ }
 exp    = _{ ("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+ }
 
-// ====== Booleans ======
+// Booleans
 boolean = @{ ("true" | "false" | "yes" | "no" | "on" | "off") ~ &(!value_unquoted_char) }
 
-// ====== Null ======
+// Null
 null = @{ "null" ~ &(!value_unquoted_char) }
 
-// ====== Substitutions ======
+// Substitutions
 substitution    =  { "${" ~ optional_q? ~ WHITESPACE_INLINE ~ path_expression ~ WHITESPACE_INLINE ~ "}" }
 optional_q      = _{ "?" }
 path_expression =  { key_component ~ (WHITESPACE_INLINE ~ "." ~ WHITESPACE_INLINE ~ key_component)* }
 
-// ====== Includes ======
+// Includes
 include          =  { "include" ~ (quoted_string | include_function) }
 include_function =  { include_keyword ~ WHITESPACE_INLINE ~ "(" ~ WHITESPACE_INLINE ~ quoted_string ~ WHITESPACE_INLINE ~ ")" }
 include_keyword  = @{ "file" | "url" | "classpath" | "required" }

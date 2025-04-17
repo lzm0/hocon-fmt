@@ -1,3 +1,5 @@
+use std::io::Read;
+
 use pest::Parser;
 use pest_derive::Parser;
 
@@ -80,9 +82,15 @@ fn format_pair(pair: pest::iterators::Pair<Rule>, output: &mut String, indent: u
 }
 
 fn main() {
-    let file_path = std::env::args().nth(1).expect("File path missing");
-    let input = std::fs::read_to_string(file_path).unwrap();
-
+    let mut input = String::new();
+    match std::env::args().nth(1) {
+        Some(file_path) => {
+            input = std::fs::read_to_string(file_path).unwrap();
+        }
+        None => {
+            std::io::stdin().read_to_string(&mut input).unwrap();
+        }
+    }
     match format_hocon(&input) {
         Ok(formatted) => println!("{}", formatted),
         Err(e) => eprintln!("Parsing error: {}", e),
