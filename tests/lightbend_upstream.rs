@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use hocon_formatter::format_hocon;
+use hocon_fmt::format_hocon;
 
 const PORTED_EQUIV_CASES: &[&str] = &[
     "equiv01/comments.conf",

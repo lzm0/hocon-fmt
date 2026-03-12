@@ -1,14 +1,223 @@
-use hocon_formatter::format_hocon;
+use std::fs;
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
+
+use clap::{CommandFactory, Parser};
+use hocon_fmt::format_hocon;
+
+#[derive(Debug, Parser)]
+#[command(
+    author,
+    version,
+    about = "Format HOCON files",
+    long_about = "Format HOCON files from stdin or disk. By default, the formatter reads a single input and writes the result to stdout."
+)]
+struct Cli {
+    #[arg(
+        value_name = "FILE",
+        help = "Input file(s). Reads stdin when omitted or when '-' is used."
+    )]
+    inputs: Vec<PathBuf>,
+
+    #[arg(
+        short = 'w',
+        long = "write",
+        visible_alias = "in-place",
+        help = "Write the formatted result back to each input file."
+    )]
+    write: bool,
+
+    #[arg(long, help = "Check whether the input is already formatted.")]
+    check: bool,
+
+    #[arg(
+        short,
+        long,
+        value_name = "FILE",
+        help = "Write the formatted output to a file instead of stdout."
+    )]
+    output: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+enum InputSource {
+    Stdin,
+    File(PathBuf),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunOutcome {
+    Success,
+    CheckFailed,
+}
 
 fn main() {
-    let file_path = std::env::args().nth(1).expect("file path missing");
-    let input = std::fs::read_to_string(file_path).expect("failed to read input file");
+    let cli = Cli::parse();
+    validate_cli_or_exit(&cli);
 
-    match format_hocon(&input) {
-        Ok(formatted) => print!("{formatted}"),
+    match run(cli) {
+        Ok(RunOutcome::Success) => {}
+        Ok(RunOutcome::CheckFailed) => std::process::exit(1),
         Err(error) => {
-            eprintln!("Parsing error: {error}");
-            std::process::exit(1);
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+    }
+}
+
+fn validate_cli_or_exit(cli: &Cli) {
+    if let Err(message) = validate_cli(cli) {
+        Cli::command()
+            .error(clap::error::ErrorKind::ValueValidation, message)
+            .exit();
+    }
+}
+
+fn validate_cli(cli: &Cli) -> Result<(), String> {
+    let inputs = resolve_inputs(&cli.inputs);
+    let stdin_count = inputs
+        .iter()
+        .filter(|input| matches!(input, InputSource::Stdin))
+        .count();
+
+    if cli.write && cli.check {
+        return Err("--write and --check cannot be used together".to_string());
+    }
+    if cli.write && cli.output.is_some() {
+        return Err("--write and --output cannot be used together".to_string());
+    }
+    if cli.check && cli.output.is_some() {
+        return Err("--check and --output cannot be used together".to_string());
+    }
+    if stdin_count > 1 {
+        return Err("stdin may only be specified once".to_string());
+    }
+    if stdin_count == 1 && inputs.len() > 1 {
+        return Err("'-' cannot be mixed with file paths".to_string());
+    }
+    if cli.write && inputs.is_empty() {
+        return Err("--write requires at least one input file".to_string());
+    }
+    if cli.write
+        && inputs
+            .iter()
+            .any(|input| matches!(input, InputSource::Stdin))
+    {
+        return Err("--write only supports file inputs".to_string());
+    }
+    if cli.output.is_some() && inputs.len() > 1 {
+        return Err("--output only supports a single input".to_string());
+    }
+    if !cli.write && !cli.check && cli.output.is_none() && inputs.len() > 1 {
+        return Err("multiple input files require --check or --write".to_string());
+    }
+
+    Ok(())
+}
+
+fn run(cli: Cli) -> Result<RunOutcome, String> {
+    let inputs = resolve_inputs(&cli.inputs);
+
+    if cli.write {
+        return write_in_place(&inputs);
+    }
+    if cli.check {
+        return check_inputs(&inputs);
+    }
+
+    let source = inputs.first().cloned().unwrap_or(InputSource::Stdin);
+    let (_, formatted) = format_source(&source)?;
+
+    if let Some(output_path) = cli.output {
+        fs::write(&output_path, formatted)
+            .map_err(|error| format!("failed to write {}: {error}", output_path.display()))?;
+    } else {
+        io::stdout()
+            .write_all(formatted.as_bytes())
+            .map_err(|error| format!("failed to write stdout: {error}"))?;
+    }
+
+    Ok(RunOutcome::Success)
+}
+
+fn resolve_inputs(paths: &[PathBuf]) -> Vec<InputSource> {
+    if paths.is_empty() {
+        return vec![InputSource::Stdin];
+    }
+
+    paths
+        .iter()
+        .map(|path| {
+            if path == Path::new("-") {
+                InputSource::Stdin
+            } else {
+                InputSource::File(path.clone())
+            }
+        })
+        .collect()
+}
+
+fn check_inputs(inputs: &[InputSource]) -> Result<RunOutcome, String> {
+    let mut needs_formatting = false;
+
+    for source in inputs {
+        let (input, formatted) = format_source(source)?;
+        if formatted != input {
+            needs_formatting = true;
+            eprintln!("would reformat {}", source.display_name());
+        }
+    }
+
+    if needs_formatting {
+        Ok(RunOutcome::CheckFailed)
+    } else {
+        Ok(RunOutcome::Success)
+    }
+}
+
+fn write_in_place(inputs: &[InputSource]) -> Result<RunOutcome, String> {
+    for source in inputs {
+        let InputSource::File(path) = source else {
+            return Err("--write only supports file inputs".to_string());
+        };
+
+        let (input, formatted) = format_source(source)?;
+        if formatted != input {
+            fs::write(path, formatted)
+                .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+            eprintln!("formatted {}", path.display());
+        }
+    }
+
+    Ok(RunOutcome::Success)
+}
+
+fn format_source(source: &InputSource) -> Result<(String, String), String> {
+    let input = source.read()?;
+    let formatted = format_hocon(&input)
+        .map_err(|error| format!("failed to parse {}: {error}", source.display_name()))?;
+    Ok((input, formatted))
+}
+
+impl InputSource {
+    fn display_name(&self) -> String {
+        match self {
+            InputSource::Stdin => "<stdin>".to_string(),
+            InputSource::File(path) => path.display().to_string(),
+        }
+    }
+
+    fn read(&self) -> Result<String, String> {
+        match self {
+            InputSource::Stdin => {
+                let mut input = String::new();
+                io::stdin()
+                    .read_to_string(&mut input)
+                    .map_err(|error| format!("failed to read stdin: {error}"))?;
+                Ok(input)
+            }
+            InputSource::File(path) => fs::read_to_string(path)
+                .map_err(|error| format!("failed to read {}: {error}", path.display())),
         }
     }
 }
