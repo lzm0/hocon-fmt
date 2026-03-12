@@ -172,9 +172,6 @@ fn format_root_entries(entries: &[Entry], options: FormatOptions) -> String {
             out.push('\n');
         }
         out.push_str(&format_entry(entry, 0, options));
-        if should_add_comma(index, entries.len(), options.comma_style) {
-            out.push(',');
-        }
     }
     out.push('\n');
     out
@@ -1409,6 +1406,29 @@ arrays = [
     2,
     3,
   ],
+}
+"#;
+
+        assert_eq!(
+            format_hocon_with_options(
+                input,
+                FormatOptions {
+                    comma_style: CommaStyle::Trailing,
+                },
+            )
+            .unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn does_not_add_commas_to_implicit_root_entries() {
+        let input = r#"include "base.conf"
+foo = { bar = 1 }
+"#;
+        let expected = r#"include "base.conf"
+foo = {
+  bar = 1,
 }
 "#;
 
