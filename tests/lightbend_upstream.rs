@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use hocon_fmt::format_hocon;
+use indoc::indoc;
 
 const PORTED_EQUIV_CASES: &[&str] = &[
     "equiv01/comments.conf",
@@ -106,26 +107,39 @@ fn ported_lightbend_include_support_fixtures_parse_and_format_stably() {
 
 #[test]
 fn ported_from_concatenation_test_string_concat_cannot_span_lines() {
-    let input = "a : ${x}\nfoo, x = 1";
+    let input = indoc! {"
+        a : ${x}
+        foo, x = 1
+    "};
     assert!(format_hocon(input).is_err());
 }
 
 #[test]
 fn ported_from_concatenation_test_list_concat_cannot_span_lines() {
-    let input = "a : [1,2]\n[3,4]";
+    let input = indoc! {"
+        a : [1,2]
+        [3,4]
+    "};
     assert!(format_hocon(input).is_err());
 }
 
 #[test]
 fn ported_from_concatenation_test_object_concat_cannot_span_lines() {
-    let input = "a : { b : c }\n{ x : y }";
+    let input = indoc! {"
+        a : { b : c }
+        { x : y }
+    "};
     assert!(format_hocon(input).is_err());
 }
 
 #[test]
 fn ported_from_concatenation_test_string_concat_inside_array_value() {
     let input = "a : [ foo bar 10 ]";
-    let expected = "a = [\n  foo bar 10\n]\n";
+    let expected = indoc! {"
+        a = [
+          foo bar 10
+        ]
+    "};
 
     assert_eq!(format_hocon(input).unwrap(), expected);
 }

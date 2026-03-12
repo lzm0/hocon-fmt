@@ -1246,18 +1246,20 @@ fn is_inline_whitespace(ch: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{CommaStyle, FormatOptions, format_hocon, format_hocon_with_options};
+    use indoc::indoc;
 
     #[test]
     fn formats_implicit_root_object_and_nested_values() {
         let input = r#"foo:{bar=1,baz:[2,3]}"#;
-        let expected = r#"foo = {
-  bar = 1
-  baz = [
-    2
-    3
-  ]
-}
-"#;
+        let expected = indoc! {"
+            foo = {
+              bar = 1
+              baz = [
+                2
+                3
+              ]
+            }
+        "};
 
         assert_eq!(format_hocon(input).unwrap(), expected);
     }
@@ -1272,44 +1274,46 @@ mod tests {
 
     #[test]
     fn formats_includes_substitutions_and_append() {
-        let input = r#"
-include required(file("base.conf"))
-foo.bar."baz qux"+=[1,2]
-ref=${?ENV_VAR}
-"#;
-        let expected = r#"include required(file("base.conf"))
+        let input = indoc! {r#"
+            include required(file("base.conf"))
+            foo.bar."baz qux"+=[1,2]
+            ref=${?ENV_VAR}
+        "#};
+        let expected = indoc! {r#"
+            include required(file("base.conf"))
 
-foo.bar."baz qux" += [
-  1
-  2
-]
+            foo.bar."baz qux" += [
+              1
+              2
+            ]
 
-ref = ${?ENV_VAR}
-"#;
+            ref = ${?ENV_VAR}
+        "#};
 
         assert_eq!(format_hocon(input).unwrap(), expected);
     }
 
     #[test]
     fn formats_object_and_array_concatenation() {
-        let input = r#"
-merged = { x = 1 }{ y = 2 }
-arrays = [1,2] [3,4]
-"#;
-        let expected = r#"merged = {
-  x = 1
-}{
-  y = 2
-}
+        let input = indoc! {"
+            merged = { x = 1 }{ y = 2 }
+            arrays = [1,2] [3,4]
+        "};
+        let expected = indoc! {"
+            merged = {
+              x = 1
+            }{
+              y = 2
+            }
 
-arrays = [
-  1
-  2
-] [
-  3
-  4
-]
-"#;
+            arrays = [
+              1
+              2
+            ] [
+              3
+              4
+            ]
+        "};
 
         assert_eq!(format_hocon(input).unwrap(), expected);
     }
@@ -1317,15 +1321,16 @@ arrays = [
     #[test]
     fn supports_concatenation_inside_arrays() {
         let input = r#"[foo bar, { a = 1 } { b = 2 }]"#;
-        let expected = r#"[
-  foo bar
-  {
-    a = 1
-  } {
-    b = 2
-  }
-]
-"#;
+        let expected = indoc! {"
+            [
+              foo bar
+              {
+                a = 1
+              } {
+                b = 2
+              }
+            ]
+        "};
 
         assert_eq!(format_hocon(input).unwrap(), expected);
     }
@@ -1357,13 +1362,14 @@ arrays = [
     #[test]
     fn preserves_explicit_root_object() {
         let input = r#"{ foo = 1, bar = { baz = true } }"#;
-        let expected = r#"{
-  foo = 1
-  bar = {
-    baz = true
-  }
-}
-"#;
+        let expected = indoc! {"
+            {
+              foo = 1
+              bar = {
+                baz = true
+              }
+            }
+        "};
 
         assert_eq!(format_hocon(input).unwrap(), expected);
     }
@@ -1379,14 +1385,15 @@ arrays = [
     #[test]
     fn formats_with_commas_between_elements() {
         let input = r#"foo:{bar=1,baz:[2,3]}"#;
-        let expected = r#"foo = {
-  bar = 1,
-  baz = [
-    2,
-    3
-  ]
-}
-"#;
+        let expected = indoc! {"
+            foo = {
+              bar = 1,
+              baz = [
+                2,
+                3
+              ]
+            }
+        "};
 
         assert_eq!(
             format_hocon_with_options(
@@ -1403,14 +1410,15 @@ arrays = [
     #[test]
     fn formats_with_trailing_commas() {
         let input = r#"{ foo = 1, bar = [2,3] }"#;
-        let expected = r#"{
-  foo = 1,
-  bar = [
-    2,
-    3,
-  ],
-}
-"#;
+        let expected = indoc! {"
+            {
+              foo = 1,
+              bar = [
+                2,
+                3,
+              ],
+            }
+        "};
 
         assert_eq!(
             format_hocon_with_options(
@@ -1426,15 +1434,17 @@ arrays = [
 
     #[test]
     fn does_not_add_commas_to_implicit_root_entries() {
-        let input = r#"include "base.conf"
-foo = { bar = 1 }
-"#;
-        let expected = r#"include "base.conf"
+        let input = indoc! {r#"
+            include "base.conf"
+            foo = { bar = 1 }
+        "#};
+        let expected = indoc! {r#"
+            include "base.conf"
 
-foo = {
-  bar = 1,
-}
-"#;
+            foo = {
+              bar = 1,
+            }
+        "#};
 
         assert_eq!(
             format_hocon_with_options(
@@ -1450,23 +1460,25 @@ foo = {
 
     #[test]
     fn limits_root_separation_to_one_blank_line() {
-        let input = r#"include "base.conf"
+        let input = indoc! {r#"
+            include "base.conf"
 
 
 
-foo = { bar = 1 }
+            foo = { bar = 1 }
 
 
-ref = ${?ENV_VAR}
-"#;
-        let expected = r#"include "base.conf"
+            ref = ${?ENV_VAR}
+        "#};
+        let expected = indoc! {r#"
+            include "base.conf"
 
-foo = {
-  bar = 1
-}
+            foo = {
+              bar = 1
+            }
 
-ref = ${?ENV_VAR}
-"#;
+            ref = ${?ENV_VAR}
+        "#};
 
         assert_eq!(format_hocon(input).unwrap(), expected);
     }
