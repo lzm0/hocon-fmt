@@ -169,7 +169,7 @@ fn format_root_entries(entries: &[Entry], options: FormatOptions) -> String {
     let mut out = String::new();
     for (index, entry) in entries.iter().enumerate() {
         if index > 0 {
-            out.push('\n');
+            out.push_str("\n\n");
         }
         out.push_str(&format_entry(entry, 0, options));
     }
@@ -1278,10 +1278,12 @@ foo.bar."baz qux"+=[1,2]
 ref=${?ENV_VAR}
 "#;
         let expected = r#"include required(file("base.conf"))
+
 foo.bar."baz qux" += [
   1
   2
 ]
+
 ref = ${?ENV_VAR}
 "#;
 
@@ -1299,6 +1301,7 @@ arrays = [1,2] [3,4]
 }{
   y = 2
 }
+
 arrays = [
   1
   2
@@ -1427,6 +1430,7 @@ arrays = [
 foo = { bar = 1 }
 "#;
         let expected = r#"include "base.conf"
+
 foo = {
   bar = 1,
 }
@@ -1442,5 +1446,28 @@ foo = {
             .unwrap(),
             expected
         );
+    }
+
+    #[test]
+    fn limits_root_separation_to_one_blank_line() {
+        let input = r#"include "base.conf"
+
+
+
+foo = { bar = 1 }
+
+
+ref = ${?ENV_VAR}
+"#;
+        let expected = r#"include "base.conf"
+
+foo = {
+  bar = 1
+}
+
+ref = ${?ENV_VAR}
+"#;
+
+        assert_eq!(format_hocon(input).unwrap(), expected);
     }
 }
