@@ -2,8 +2,8 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
-use clap::{CommandFactory, Parser};
-use hocon_fmt::format_hocon;
+use clap::{CommandFactory, Parser, ValueEnum};
+use hocon_fmt::{CommaStyle, FormatOptions, format_hocon_with_options};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -37,6 +37,14 @@ struct Cli {
         help = "Write the formatted output to a file instead of stdout."
     )]
     output: Option<PathBuf>,
+
+    #[arg(
+        long = "commas",
+        value_enum,
+        default_value_t = CliCommaStyle::None,
+        help = "Comma policy for objects and arrays."
+    )]
+    comma_style: CliCommaStyle,
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +57,14 @@ enum InputSource {
 enum RunOutcome {
     Success,
     CheckFailed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+enum CliCommaStyle {
+    #[default]
+    None,
+    Commas,
+    Trailing,
 }
 
 fn main() {
@@ -116,17 +132,20 @@ fn validate_cli(cli: &Cli) -> Result<(), String> {
 }
 
 fn run(cli: Cli) -> Result<RunOutcome, String> {
+    let options = FormatOptions {
+        comma_style: cli.comma_style.into(),
+    };
     let inputs = resolve_inputs(&cli.inputs);
 
     if cli.write {
-        return write_in_place(&inputs);
+        return write_in_place(&inputs, options);
     }
     if cli.check {
-        return check_inputs(&inputs);
+        return check_inputs(&inputs, options);
     }
 
     let source = inputs.first().cloned().unwrap_or(InputSource::Stdin);
-    let (_, formatted) = format_source(&source)?;
+    let (_, formatted) = format_source(&source, options)?;
 
     if let Some(output_path) = cli.output {
         fs::write(&output_path, formatted)
@@ -157,11 +176,11 @@ fn resolve_inputs(paths: &[PathBuf]) -> Vec<InputSource> {
         .collect()
 }
 
-fn check_inputs(inputs: &[InputSource]) -> Result<RunOutcome, String> {
+fn check_inputs(inputs: &[InputSource], options: FormatOptions) -> Result<RunOutcome, String> {
     let mut needs_formatting = false;
 
     for source in inputs {
-        let (input, formatted) = format_source(source)?;
+        let (input, formatted) = format_source(source, options)?;
         if formatted != input {
             needs_formatting = true;
             eprintln!("would reformat {}", source.display_name());
@@ -175,13 +194,13 @@ fn check_inputs(inputs: &[InputSource]) -> Result<RunOutcome, String> {
     }
 }
 
-fn write_in_place(inputs: &[InputSource]) -> Result<RunOutcome, String> {
+fn write_in_place(inputs: &[InputSource], options: FormatOptions) -> Result<RunOutcome, String> {
     for source in inputs {
         let InputSource::File(path) = source else {
             return Err("--write only supports file inputs".to_string());
         };
 
-        let (input, formatted) = format_source(source)?;
+        let (input, formatted) = format_source(source, options)?;
         if formatted != input {
             fs::write(path, formatted)
                 .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
@@ -192,11 +211,21 @@ fn write_in_place(inputs: &[InputSource]) -> Result<RunOutcome, String> {
     Ok(RunOutcome::Success)
 }
 
-fn format_source(source: &InputSource) -> Result<(String, String), String> {
+fn format_source(source: &InputSource, options: FormatOptions) -> Result<(String, String), String> {
     let input = source.read()?;
-    let formatted = format_hocon(&input)
+    let formatted = format_hocon_with_options(&input, options)
         .map_err(|error| format!("failed to parse {}: {error}", source.display_name()))?;
     Ok((input, formatted))
+}
+
+impl From<CliCommaStyle> for CommaStyle {
+    fn from(value: CliCommaStyle) -> Self {
+        match value {
+            CliCommaStyle::None => CommaStyle::None,
+            CliCommaStyle::Commas => CommaStyle::Commas,
+            CliCommaStyle::Trailing => CommaStyle::Trailing,
+        }
+    }
 }
 
 impl InputSource {

@@ -64,6 +64,42 @@ fn formats_stdin_to_stdout_when_no_file_is_given() {
 }
 
 #[test]
+fn formats_with_no_commas_when_requested() {
+    let output = run_cli(&["--commas", "none"], Some("a:{b=1,c:[2,3]}"));
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "a = {\n  b = 1\n  c = [\n    2\n    3\n  ]\n}\n"
+    );
+    assert!(String::from_utf8(output.stderr).unwrap().is_empty());
+}
+
+#[test]
+fn formats_with_standard_commas_when_requested() {
+    let output = run_cli(&["--commas", "commas"], Some("a:{b=1,c:[2,3]}"));
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "a = {\n  b = 1,\n  c = [\n    2,\n    3\n  ]\n}\n"
+    );
+    assert!(String::from_utf8(output.stderr).unwrap().is_empty());
+}
+
+#[test]
+fn formats_with_trailing_commas_when_requested() {
+    let output = run_cli(&["--commas", "trailing"], Some("{a=1,b=[2,3]}"));
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "{\n  a = 1,\n  b = [\n    2,\n    3,\n  ],\n}\n"
+    );
+    assert!(String::from_utf8(output.stderr).unwrap().is_empty());
+}
+
+#[test]
 fn check_mode_reports_unformatted_files() {
     let dir = unique_temp_dir();
     let file = dir.join("input.conf");

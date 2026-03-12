@@ -42,6 +42,19 @@ impl Display for ParseError {
 
 impl Error for ParseError {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FormatOptions {
+    pub comma_style: CommaStyle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CommaStyle {
+    #[default]
+    None,
+    Commas,
+    Trailing,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Document {
     root: Root,
@@ -123,37 +136,51 @@ struct Substitution {
 }
 
 pub fn format_hocon(input: &str) -> Result<String, ParseError> {
+    format_hocon_with_options(input, FormatOptions::default())
+}
+
+pub fn format_hocon_with_options(
+    input: &str,
+    options: FormatOptions,
+) -> Result<String, ParseError> {
     let mut parser = Parser::new(input);
     let document = parser.parse_document()?;
-    Ok(document.format())
+    Ok(document.format(options))
 }
 
 impl Document {
-    fn format(&self) -> String {
+    fn format(&self, options: FormatOptions) -> String {
         match &self.root {
             Root::Object { entries, braced } => {
                 if *braced {
-                    format!("{}\n", format_object(entries, 0))
+                    format!("{}\n", format_object(entries, 0, options))
                 } else if entries.is_empty() {
                     String::new()
                 } else {
-                    let mut out = String::new();
-                    for (index, entry) in entries.iter().enumerate() {
-                        if index > 0 {
-                            out.push('\n');
-                        }
-                        out.push_str(&format_entry(entry, 0));
-                    }
-                    out.push('\n');
-                    out
+                    format_root_entries(entries, options)
                 }
             }
-            Root::Array(items) => format!("{}\n", format_array(items, 0)),
+            Root::Array(items) => format!("{}\n", format_array(items, 0, options)),
         }
     }
 }
 
-fn format_object(entries: &[Entry], indent: usize) -> String {
+fn format_root_entries(entries: &[Entry], options: FormatOptions) -> String {
+    let mut out = String::new();
+    for (index, entry) in entries.iter().enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        out.push_str(&format_entry(entry, 0, options));
+        if should_add_comma(index, entries.len(), options.comma_style) {
+            out.push(',');
+        }
+    }
+    out.push('\n');
+    out
+}
+
+fn format_object(entries: &[Entry], indent: usize, options: FormatOptions) -> String {
     if entries.is_empty() {
         return "{}".to_string();
     }
@@ -165,7 +192,10 @@ fn format_object(entries: &[Entry], indent: usize) -> String {
             out.push('\n');
         }
         out.push_str(&" ".repeat(indent + 2));
-        out.push_str(&format_entry(entry, indent + 2));
+        out.push_str(&format_entry(entry, indent + 2, options));
+        if should_add_comma(index, entries.len(), options.comma_style) {
+            out.push(',');
+        }
     }
     out.push('\n');
     out.push_str(&" ".repeat(indent));
@@ -173,7 +203,7 @@ fn format_object(entries: &[Entry], indent: usize) -> String {
     out
 }
 
-fn format_array(items: &[Value], indent: usize) -> String {
+fn format_array(items: &[Value], indent: usize, options: FormatOptions) -> String {
     if items.is_empty() {
         return "[]".to_string();
     }
@@ -185,7 +215,10 @@ fn format_array(items: &[Value], indent: usize) -> String {
             out.push('\n');
         }
         out.push_str(&" ".repeat(indent + 2));
-        out.push_str(&format_value(item, indent + 2));
+        out.push_str(&format_value(item, indent + 2, options));
+        if should_add_comma(index, items.len(), options.comma_style) {
+            out.push(',');
+        }
     }
     out.push('\n');
     out.push_str(&" ".repeat(indent));
@@ -193,7 +226,15 @@ fn format_array(items: &[Value], indent: usize) -> String {
     out
 }
 
-fn format_entry(entry: &Entry, indent: usize) -> String {
+fn should_add_comma(index: usize, len: usize, comma_style: CommaStyle) -> bool {
+    match comma_style {
+        CommaStyle::None => false,
+        CommaStyle::Commas => index + 1 < len,
+        CommaStyle::Trailing => true,
+    }
+}
+
+fn format_entry(entry: &Entry, indent: usize, options: FormatOptions) -> String {
     match entry {
         Entry::Field(field) => {
             let operator = match field.op {
@@ -204,7 +245,7 @@ fn format_entry(entry: &Entry, indent: usize) -> String {
                 "{} {} {}",
                 format_path(&field.path, true),
                 operator,
-                format_value(&field.value, indent)
+                format_value(&field.value, indent, options)
             )
         }
         Entry::Include(include) => format_include(include),
@@ -227,24 +268,24 @@ fn format_include(include: &Include) -> String {
     }
 }
 
-fn format_value(value: &Value, indent: usize) -> String {
+fn format_value(value: &Value, indent: usize, options: FormatOptions) -> String {
     match value {
-        Value::Single(part) => format_value_part(part, indent),
+        Value::Single(part) => format_value_part(part, indent, options),
         Value::Concat(items) => {
             let mut out = String::new();
             for item in items {
                 out.push_str(&item.separator);
-                out.push_str(&format_value_part(&item.part, indent));
+                out.push_str(&format_value_part(&item.part, indent, options));
             }
             out
         }
     }
 }
 
-fn format_value_part(part: &ValuePart, indent: usize) -> String {
+fn format_value_part(part: &ValuePart, indent: usize, options: FormatOptions) -> String {
     match part {
-        ValuePart::Object(entries) => format_object(entries, indent),
-        ValuePart::Array(items) => format_array(items, indent),
+        ValuePart::Object(entries) => format_object(entries, indent, options),
+        ValuePart::Array(items) => format_array(items, indent, options),
         ValuePart::Atom(atom) => format_atom(atom),
     }
 }
@@ -1207,7 +1248,7 @@ fn is_inline_whitespace(ch: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::format_hocon;
+    use super::{CommaStyle, FormatOptions, format_hocon, format_hocon_with_options};
 
     #[test]
     fn formats_implicit_root_object_and_nested_values() {
@@ -1333,5 +1374,53 @@ arrays = [
         let expected = "3.14 = 42\n";
 
         assert_eq!(format_hocon(input).unwrap(), expected);
+    }
+
+    #[test]
+    fn formats_with_commas_between_elements() {
+        let input = r#"foo:{bar=1,baz:[2,3]}"#;
+        let expected = r#"foo = {
+  bar = 1,
+  baz = [
+    2,
+    3
+  ]
+}
+"#;
+
+        assert_eq!(
+            format_hocon_with_options(
+                input,
+                FormatOptions {
+                    comma_style: CommaStyle::Commas,
+                },
+            )
+            .unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn formats_with_trailing_commas() {
+        let input = r#"{ foo = 1, bar = [2,3] }"#;
+        let expected = r#"{
+  foo = 1,
+  bar = [
+    2,
+    3,
+  ],
+}
+"#;
+
+        assert_eq!(
+            format_hocon_with_options(
+                input,
+                FormatOptions {
+                    comma_style: CommaStyle::Trailing,
+                },
+            )
+            .unwrap(),
+            expected
+        );
     }
 }
