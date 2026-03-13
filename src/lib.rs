@@ -69,14 +69,23 @@ enum Root {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Entry {
     Field(Field),
-    Include(Include),
+    Include(IncludeStmt),
     Comment(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ArrayItem {
-    Value(Value),
+    Value {
+        value: Value,
+        trailing_comment: Option<String>,
+    },
     Comment(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct IncludeStmt {
+    include: Include,
+    trailing_comment: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +93,7 @@ struct Field {
     path: Vec<String>,
     op: FieldOp,
     value: Value,
+    trailing_comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,7 +237,7 @@ fn format_array(items: &[ArrayItem], indent: usize, options: FormatOptions) -> S
     let value_indices: Vec<usize> = items
         .iter()
         .enumerate()
-        .filter_map(|(idx, item)| matches!(item, ArrayItem::Value(_)).then_some(idx))
+        .filter_map(|(idx, item)| matches!(item, ArrayItem::Value { .. }).then_some(idx))
         .collect();
 
     let mut out = String::new();
@@ -238,8 +248,14 @@ fn format_array(items: &[ArrayItem], indent: usize, options: FormatOptions) -> S
         }
         out.push_str(&" ".repeat(indent + 2));
         match item {
-            ArrayItem::Value(value) => {
+            ArrayItem::Value {
+                value,
+                trailing_comment,
+            } => {
                 out.push_str(&format_value(value, indent + 2, options));
+                if let Some(comment) = trailing_comment {
+                    out.push_str(comment);
+                }
                 if should_add_comma_for_item(index, &value_indices, options.comma_style) {
                     out.push(',');
                 }
@@ -260,14 +276,24 @@ fn format_entry(entry: &Entry, indent: usize, options: FormatOptions) -> String 
                 FieldOp::Set => "=",
                 FieldOp::Append => "+=",
             };
-            format!(
+            let mut out = format!(
                 "{} {} {}",
                 format_path(&field.path, true),
                 operator,
                 format_value(&field.value, indent, options)
-            )
+            );
+            if let Some(comment) = &field.trailing_comment {
+                out.push_str(comment);
+            }
+            out
         }
-        Entry::Include(include) => format_include(include),
+        Entry::Include(include) => {
+            let mut out = format_include(&include.include);
+            if let Some(comment) = &include.trailing_comment {
+                out.push_str(comment);
+            }
+            out
+        }
         Entry::Comment(comment) => comment.clone(),
     }
 }
@@ -483,6 +509,9 @@ impl<'a> Parser<'a> {
             }
 
             entries.push(self.parse_entry()?);
+            if let Some(comment) = self.consume_inline_comment_suffix() {
+                Self::attach_trailing_comment_to_entry(entries.last_mut().unwrap(), comment);
+            }
 
             if self.is_object_end(terminator) {
                 break;
@@ -516,7 +545,13 @@ impl<'a> Parser<'a> {
                 break;
             }
 
-            items.push(ArrayItem::Value(self.parse_value()?));
+            items.push(ArrayItem::Value {
+                value: self.parse_value()?,
+                trailing_comment: None,
+            });
+            if let Some(comment) = self.consume_inline_comment_suffix() {
+                Self::attach_trailing_comment_to_array_item(items.last_mut().unwrap(), comment);
+            }
 
             if self.peek_char() == Some(']') {
                 break;
@@ -539,7 +574,10 @@ impl<'a> Parser<'a> {
         self.skip_layout_without_comments();
 
         if self.starts_include_statement() {
-            Ok(Entry::Include(self.parse_include()?))
+            Ok(Entry::Include(IncludeStmt {
+                include: self.parse_include()?,
+                trailing_comment: None,
+            }))
         } else {
             Ok(Entry::Field(self.parse_field()?))
         }
@@ -566,7 +604,12 @@ impl<'a> Parser<'a> {
         }
 
         let value = self.parse_value()?;
-        Ok(Field { path, op, value })
+        Ok(Field {
+            path,
+            op,
+            value,
+            trailing_comment: None,
+        })
     }
 
     fn parse_include(&mut self) -> Result<Include, ParseError> {
@@ -634,12 +677,15 @@ impl<'a> Parser<'a> {
         }];
 
         loop {
+            let before_separator = self.pos;
             let separator = self.consume_inline_whitespace();
             if self.starts_comment() || self.peek_char() == Some('\n') || self.is_value_terminator()
             {
+                self.pos = before_separator;
                 break;
             }
             if !self.can_start_value_part() {
+                self.pos = before_separator;
                 break;
             }
 
@@ -1139,6 +1185,33 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn consume_inline_comment_suffix(&mut self) -> Option<String> {
+        let before = self.pos;
+        let ws = self.consume_inline_whitespace();
+        if self.starts_comment() {
+            return Some(format!("{}{}", ws, self.consume_comment_text()));
+        }
+        self.pos = before;
+        None
+    }
+
+    fn attach_trailing_comment_to_entry(entry: &mut Entry, comment: String) {
+        match entry {
+            Entry::Field(field) => field.trailing_comment = Some(comment),
+            Entry::Include(include) => include.trailing_comment = Some(comment),
+            Entry::Comment(_) => {}
+        }
+    }
+
+    fn attach_trailing_comment_to_array_item(item: &mut ArrayItem, comment: String) {
+        match item {
+            ArrayItem::Value {
+                trailing_comment, ..
+            } => *trailing_comment = Some(comment),
+            ArrayItem::Comment(_) => {}
+        }
+    }
+
     fn consume_ws_or_comment_separator(&mut self) -> bool {
         let before = self.pos;
         let _ = self.consume_inline_whitespace();
@@ -1635,6 +1708,22 @@ mod tests {
               b = [
                 # item note
                 2
+              ]
+            }
+        "#};
+
+        assert_eq!(format_hocon(input).unwrap(), input);
+    }
+
+    #[test]
+    fn preserves_inline_comments_on_same_line() {
+        let input = indoc! {r#"
+            include "base.conf" # include note
+
+            root = {
+              a = 1 // value note
+              b = [
+                2 # item note
               ]
             }
         "#};
