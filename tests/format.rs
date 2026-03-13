@@ -307,13 +307,30 @@ fn ported_from_tokenizer_test_invalid_strings_are_rejected() {
 }
 
 #[test]
-fn rejects_empty_implicit_root_documents() {
-    for input in [
-        "",
-        " \n\t\u{feff}\n",
-        "# comment only\n",
-        "// comment only\n",
-    ] {
+fn accepts_empty_implicit_root_documents() {
+    for input in ["", " \n\t\u{feff}\n"] {
+        assert_eq!(
+            format_hocon(input).unwrap(),
+            "",
+            "expected empty output for {input:?}"
+        );
+    }
+}
+
+#[test]
+fn accepts_comment_only_implicit_root_documents() {
+    for input in ["# comment only\n", "// comment only\n"] {
+        assert_eq!(
+            format_hocon(input).unwrap(),
+            input,
+            "expected comments to round-trip for {input:?}"
+        );
+    }
+}
+
+#[test]
+fn rejects_unmatched_closing_braces_in_implicit_root_documents() {
+    for input in ["}", "a = 1}", "a = 1\n}", "a = { b = 1 }\n}"] {
         assert!(
             format_hocon(input).is_err(),
             "expected parse failure for {input:?}"

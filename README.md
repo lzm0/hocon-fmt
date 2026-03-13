@@ -132,11 +132,6 @@ The test suite includes:
 - End-to-end CLI tests
 - Ported upstream fixtures from `lightbend/config`
 
-## Current Limitations
-
-- The formatter normalizes output into a canonical style rather than preserving
-  original whitespace
-
 ## Upstream Test Fixtures
 
 This repository includes copied test fixtures from `lightbend/config` under [`tests/fixtures/lightbend-config`](./tests/fixtures/lightbend-config). See [`tests/fixtures/lightbend-config/README.md`](./tests/fixtures/lightbend-config/README.md) for the source commit and licensing details.

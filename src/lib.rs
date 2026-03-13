@@ -699,20 +699,6 @@ impl<'a> Parser<'a> {
             },
         };
 
-        let has_implicit_root_value = match &root {
-            Root::Object {
-                object,
-                braced: false,
-            } => object
-                .entries
-                .iter()
-                .any(|entry| !matches!(entry, Entry::Comment(_))),
-            _ => true,
-        };
-        if !has_implicit_root_value {
-            return Err(self.error("empty documents are not valid"));
-        }
-
         self.skip_layout_without_comments();
         if !self.is_eof() {
             return Err(self.error("unexpected trailing content"));
@@ -736,6 +722,10 @@ impl<'a> Parser<'a> {
         loop {
             self.collect_standalone_comments_into_entries(&mut entries);
 
+            if terminator.is_none() && self.peek_char() == Some('}') {
+                return Err(self.error("unexpected closing '}' in implicit root object"));
+            }
+
             if self.is_object_end(terminator) {
                 break;
             }
@@ -750,6 +740,9 @@ impl<'a> Parser<'a> {
             }
 
             let had_separator = self.consume_body_separator_into_entries(&mut entries)?;
+            if terminator.is_none() && self.peek_char() == Some('}') {
+                return Err(self.error("unexpected closing '}' in implicit root object"));
+            }
             if self.is_object_end(terminator) {
                 break;
             }

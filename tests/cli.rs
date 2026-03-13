@@ -73,6 +73,15 @@ fn formats_stdin_to_stdout_when_no_file_is_given() {
 }
 
 #[test]
+fn accepts_empty_stdin() {
+    let output = run_cli(&[], Some(""));
+
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stdout).unwrap().is_empty());
+    assert!(String::from_utf8(output.stderr).unwrap().is_empty());
+}
+
+#[test]
 fn formats_with_no_commas_when_requested() {
     let input = read_input_fixture(&fixture_file("compact_nested_object", "input"));
     let output = run_cli(&["--commas", "none", "--max-width", "1"], Some(&input));
