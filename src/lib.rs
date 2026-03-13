@@ -63,13 +63,20 @@ struct Document {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Root {
     Object { entries: Vec<Entry>, braced: bool },
-    Array(Vec<Value>),
+    Array(Vec<ArrayItem>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Entry {
     Field(Field),
     Include(Include),
+    Comment(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ArrayItem {
+    Value(Value),
+    Comment(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,7 +116,7 @@ struct ConcatItem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ValuePart {
     Object(Vec<Entry>),
-    Array(Vec<Value>),
+    Array(Vec<ArrayItem>),
     Atom(Atom),
 }
 
@@ -169,7 +176,13 @@ fn format_root_entries(entries: &[Entry], options: FormatOptions) -> String {
     let mut out = String::new();
     for (index, entry) in entries.iter().enumerate() {
         if index > 0 {
-            out.push_str("\n\n");
+            let prev_non_comment = !matches!(entries[index - 1], Entry::Comment(_));
+            let current_non_comment = !matches!(entry, Entry::Comment(_));
+            if prev_non_comment && current_non_comment {
+                out.push_str("\n\n");
+            } else {
+                out.push('\n');
+            }
         }
         out.push_str(&format_entry(entry, 0, options));
     }
@@ -182,6 +195,12 @@ fn format_object(entries: &[Entry], indent: usize, options: FormatOptions) -> St
         return "{}".to_string();
     }
 
+    let value_indices: Vec<usize> = entries
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, entry)| (!matches!(entry, Entry::Comment(_))).then_some(idx))
+        .collect();
+
     let mut out = String::new();
     out.push_str("{\n");
     for (index, entry) in entries.iter().enumerate() {
@@ -190,7 +209,7 @@ fn format_object(entries: &[Entry], indent: usize, options: FormatOptions) -> St
         }
         out.push_str(&" ".repeat(indent + 2));
         out.push_str(&format_entry(entry, indent + 2, options));
-        if should_add_comma(index, entries.len(), options.comma_style) {
+        if should_add_comma_for_item(index, &value_indices, options.comma_style) {
             out.push(',');
         }
     }
@@ -200,10 +219,16 @@ fn format_object(entries: &[Entry], indent: usize, options: FormatOptions) -> St
     out
 }
 
-fn format_array(items: &[Value], indent: usize, options: FormatOptions) -> String {
+fn format_array(items: &[ArrayItem], indent: usize, options: FormatOptions) -> String {
     if items.is_empty() {
         return "[]".to_string();
     }
+
+    let value_indices: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, item)| matches!(item, ArrayItem::Value(_)).then_some(idx))
+        .collect();
 
     let mut out = String::new();
     out.push_str("[\n");
@@ -212,23 +237,20 @@ fn format_array(items: &[Value], indent: usize, options: FormatOptions) -> Strin
             out.push('\n');
         }
         out.push_str(&" ".repeat(indent + 2));
-        out.push_str(&format_value(item, indent + 2, options));
-        if should_add_comma(index, items.len(), options.comma_style) {
-            out.push(',');
+        match item {
+            ArrayItem::Value(value) => {
+                out.push_str(&format_value(value, indent + 2, options));
+                if should_add_comma_for_item(index, &value_indices, options.comma_style) {
+                    out.push(',');
+                }
+            }
+            ArrayItem::Comment(comment) => out.push_str(comment),
         }
     }
     out.push('\n');
     out.push_str(&" ".repeat(indent));
     out.push(']');
     out
-}
-
-fn should_add_comma(index: usize, len: usize, comma_style: CommaStyle) -> bool {
-    match comma_style {
-        CommaStyle::None => false,
-        CommaStyle::Commas => index + 1 < len,
-        CommaStyle::Trailing => true,
-    }
 }
 
 fn format_entry(entry: &Entry, indent: usize, options: FormatOptions) -> String {
@@ -246,6 +268,23 @@ fn format_entry(entry: &Entry, indent: usize, options: FormatOptions) -> String 
             )
         }
         Entry::Include(include) => format_include(include),
+        Entry::Comment(comment) => comment.clone(),
+    }
+}
+
+fn should_add_comma_for_item(
+    index: usize,
+    value_indices: &[usize],
+    comma_style: CommaStyle,
+) -> bool {
+    if !value_indices.contains(&index) {
+        return false;
+    }
+
+    match comma_style {
+        CommaStyle::None => false,
+        CommaStyle::Commas => value_indices.last().copied() != Some(index),
+        CommaStyle::Trailing => true,
     }
 }
 
@@ -399,7 +438,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_document(&mut self) -> Result<Document, ParseError> {
-        self.skip_ws_comments_newlines();
+        self.skip_layout_without_comments();
 
         let root = match self.peek_char() {
             Some('{') => {
@@ -420,7 +459,7 @@ impl<'a> Parser<'a> {
             },
         };
 
-        self.skip_ws_comments_newlines();
+        self.skip_layout_without_comments();
         if !self.is_eof() {
             return Err(self.error("unexpected trailing content"));
         }
@@ -433,10 +472,12 @@ impl<'a> Parser<'a> {
             self.expect_char('{')?;
         }
 
-        self.skip_ws_comments_newlines();
+        self.skip_layout_without_comments();
 
         let mut entries = Vec::new();
         loop {
+            self.collect_standalone_comments_into_entries(&mut entries);
+
             if self.is_object_end(terminator) {
                 break;
             }
@@ -447,7 +488,7 @@ impl<'a> Parser<'a> {
                 break;
             }
 
-            let had_separator = self.consume_body_separator();
+            let had_separator = self.consume_body_separator_into_entries(&mut entries);
             if self.is_object_end(terminator) {
                 break;
             }
@@ -463,23 +504,25 @@ impl<'a> Parser<'a> {
         Ok(entries)
     }
 
-    fn parse_array_items(&mut self) -> Result<Vec<Value>, ParseError> {
+    fn parse_array_items(&mut self) -> Result<Vec<ArrayItem>, ParseError> {
         self.expect_char('[')?;
-        self.skip_ws_comments_newlines();
+        self.skip_layout_without_comments();
 
         let mut items = Vec::new();
         loop {
-            if self.peek_char() == Some(']') {
-                break;
-            }
-
-            items.push(self.parse_value()?);
+            self.collect_standalone_comments_into_array_items(&mut items);
 
             if self.peek_char() == Some(']') {
                 break;
             }
 
-            let had_separator = self.consume_body_separator();
+            items.push(ArrayItem::Value(self.parse_value()?));
+
+            if self.peek_char() == Some(']') {
+                break;
+            }
+
+            let had_separator = self.consume_body_separator_into_array_items(&mut items);
             if self.peek_char() == Some(']') {
                 break;
             }
@@ -493,7 +536,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_entry(&mut self) -> Result<Entry, ParseError> {
-        self.skip_ws_comments_newlines();
+        self.skip_layout_without_comments();
 
         if self.starts_include_statement() {
             Ok(Entry::Include(self.parse_include()?))
@@ -1008,33 +1051,92 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn consume_body_separator(&mut self) -> bool {
-        let mut saw_newline = false;
+    fn consume_body_separator_into_entries(&mut self, entries: &mut Vec<Entry>) -> bool {
+        let mut saw_separator = false;
 
         loop {
             let _ = self.consume_inline_whitespace();
 
             if self.peek_char() == Some(',') {
                 self.pos += 1;
-                self.skip_ws_comments_newlines();
-                return true;
+                saw_separator = true;
+                continue;
             }
 
             if self.starts_comment() {
-                self.skip_comment();
+                entries.push(Entry::Comment(self.consume_comment_text()));
+                saw_separator = true;
                 continue;
             }
 
             if self.peek_char() == Some('\n') {
-                saw_newline = true;
                 self.pos += 1;
+                saw_separator = true;
                 continue;
             }
 
             break;
         }
 
-        saw_newline
+        saw_separator
+    }
+
+    fn consume_body_separator_into_array_items(&mut self, items: &mut Vec<ArrayItem>) -> bool {
+        let mut saw_separator = false;
+
+        loop {
+            let _ = self.consume_inline_whitespace();
+
+            if self.peek_char() == Some(',') {
+                self.pos += 1;
+                saw_separator = true;
+                continue;
+            }
+
+            if self.starts_comment() {
+                items.push(ArrayItem::Comment(self.consume_comment_text()));
+                saw_separator = true;
+                continue;
+            }
+
+            if self.peek_char() == Some('\n') {
+                self.pos += 1;
+                saw_separator = true;
+                continue;
+            }
+
+            break;
+        }
+
+        saw_separator
+    }
+
+    fn collect_standalone_comments_into_entries(&mut self, entries: &mut Vec<Entry>) {
+        loop {
+            self.skip_layout_without_comments();
+            if !self.starts_comment() {
+                break;
+            }
+            entries.push(Entry::Comment(self.consume_comment_text()));
+            self.skip_layout_without_comments();
+            if self.peek_char() == Some('\n') {
+                self.pos += 1;
+            }
+        }
+    }
+
+    fn collect_standalone_comments_into_array_items(&mut self, items: &mut Vec<ArrayItem>) {
+        loop {
+            self.skip_layout_without_comments();
+            if !self.starts_comment() {
+                break;
+            }
+            items.push(ArrayItem::Comment(self.consume_comment_text()));
+            self.skip_layout_without_comments();
+            if self.peek_char() == Some('\n') {
+                self.pos += 1;
+            }
+        }
     }
 
     fn consume_ws_or_comment_separator(&mut self) -> bool {
@@ -1092,6 +1194,26 @@ impl<'a> Parser<'a> {
                 break;
             }
             self.pos += ch.len_utf8();
+        }
+    }
+
+    fn consume_comment_text(&mut self) -> String {
+        let start = self.pos;
+        self.skip_comment();
+        self.input[start..self.pos].to_string()
+    }
+
+    fn skip_layout_without_comments(&mut self) {
+        loop {
+            let before = self.pos;
+            let _ = self.consume_inline_whitespace();
+            while self.peek_char() == Some('\n') {
+                self.pos += 1;
+                let _ = self.consume_inline_whitespace();
+            }
+            if self.pos == before {
+                break;
+            }
         }
     }
 
@@ -1481,5 +1603,42 @@ mod tests {
         "#};
 
         assert_eq!(format_hocon(input).unwrap(), expected);
+    }
+
+    #[test]
+    fn preserves_root_level_comments() {
+        let input = indoc! {r#"
+            # before include
+            include "base.conf"
+            // before value
+            foo = { bar = 1 }
+        "#};
+        let expected = indoc! {r#"
+            # before include
+            include "base.conf"
+            // before value
+            foo = {
+              bar = 1
+            }
+        "#};
+
+        assert_eq!(format_hocon(input).unwrap(), expected);
+    }
+
+    #[test]
+    fn preserves_comments_inside_objects_and_arrays() {
+        let input = indoc! {r#"
+            root = {
+              # first
+              a = 1
+              // second
+              b = [
+                # item note
+                2
+              ]
+            }
+        "#};
+
+        assert_eq!(format_hocon(input).unwrap(), input);
     }
 }
