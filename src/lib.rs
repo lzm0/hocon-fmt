@@ -215,9 +215,7 @@ fn format_root_entries(entries: &[Entry], options: FormatOptions) -> String {
     let mut out = String::new();
     for (index, entry) in entries.iter().enumerate() {
         if index > 0 {
-            let prev_non_comment = !matches!(entries[index - 1], Entry::Comment(_));
-            let current_non_comment = !matches!(entry, Entry::Comment(_));
-            if prev_non_comment && current_non_comment {
+            if should_insert_blank_line_between_root_entries(&entries[index - 1], entry) {
                 out.push_str("\n\n");
             } else {
                 out.push('\n');
@@ -227,6 +225,14 @@ fn format_root_entries(entries: &[Entry], options: FormatOptions) -> String {
     }
     out.push('\n');
     out
+}
+
+fn should_insert_blank_line_between_root_entries(previous: &Entry, current: &Entry) -> bool {
+    let prev_non_comment = !matches!(previous, Entry::Comment(_));
+    let current_non_comment = !matches!(current, Entry::Comment(_));
+    prev_non_comment
+        && current_non_comment
+        && !(matches!(previous, Entry::Include(_)) && matches!(current, Entry::Include(_)))
 }
 
 fn format_object(

@@ -195,6 +195,11 @@ fn limits_root_separation_to_one_blank_line() {
 }
 
 #[test]
+fn does_not_insert_blank_lines_between_root_includes() {
+    assert_formats("default/root_includes_no_blank_line");
+}
+
+#[test]
 fn preserves_root_level_comments() {
     assert_formats("default/root_level_comments");
 }
