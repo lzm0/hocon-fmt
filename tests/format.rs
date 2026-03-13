@@ -397,6 +397,13 @@ fn preserves_multiline_arrays_even_when_they_would_fit() {
 }
 
 #[test]
+fn collapses_empty_multiline_collections() {
+    assert_formats_to("a = [\n]\n", "a = []\n");
+    assert_formats_to("a = {\n}\n", "a = {}\n");
+    assert_formats_to("{\n}\n", "{}\n");
+}
+
+#[test]
 fn rejects_empty_path_elements() {
     for input in ["a..b = 1", ".a = 1", "a. = 1", "a = ${foo..bar}"] {
         assert!(

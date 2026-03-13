@@ -99,7 +99,7 @@ The formatter keeps arrays and braced objects on one line when they fit within
 `--max-width` columns. The default width is `80`.
 
 Arrays and braced objects that are already written across multiple lines stay
-multiline.
+multiline, except empty collections, which collapse to `[]` or `{}`.
 
 Examples:
 

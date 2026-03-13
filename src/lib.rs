@@ -273,6 +273,10 @@ fn format_object(
     current_column: usize,
     options: FormatOptions,
 ) -> String {
+    if object.entries.is_empty() {
+        return "{}".to_string();
+    }
+
     if let Some(inline) = format_object_inline(object, options) {
         if current_column + text_width(&inline) <= options.max_width {
             return inline;
@@ -334,6 +338,10 @@ fn format_array(
     current_column: usize,
     options: FormatOptions,
 ) -> String {
+    if array.items.is_empty() {
+        return "[]".to_string();
+    }
+
     if let Some(inline) = format_array_inline(array, options) {
         if current_column + text_width(&inline) <= options.max_width {
             return inline;
