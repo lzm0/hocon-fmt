@@ -195,6 +195,172 @@ enum ConcatKind {
     Object,
 }
 
+trait CollectionItem {
+    fn leading_blank_line(&self) -> bool;
+    fn allows_comma(&self) -> bool;
+    fn render(&self, indent: usize, add_comma: bool, options: FormatOptions) -> String;
+    fn render_inline(&self, options: FormatOptions) -> Option<String>;
+}
+
+trait BodyItem {
+    fn comment(comment: StandaloneComment) -> Self;
+    fn attach_trailing_comment(&mut self, comment: TrailingComment);
+}
+
+impl Entry {
+    fn set_leading_blank_line(&mut self, leading_blank_line: bool) {
+        match self {
+            Entry::Field(field) => field.leading_blank_line = leading_blank_line,
+            Entry::Include(include) => include.leading_blank_line = leading_blank_line,
+            Entry::Comment(comment) => comment.leading_blank_line = leading_blank_line,
+        }
+    }
+
+    fn attach_trailing_comment(&mut self, comment: TrailingComment) {
+        match self {
+            Entry::Field(field) => field.trailing_comment = Some(comment),
+            Entry::Include(include) => include.trailing_comment = Some(comment),
+            Entry::Comment(_) => {}
+        }
+    }
+}
+
+impl CollectionItem for Entry {
+    fn leading_blank_line(&self) -> bool {
+        match self {
+            Entry::Field(field) => field.leading_blank_line,
+            Entry::Include(include) => include.leading_blank_line,
+            Entry::Comment(comment) => comment.leading_blank_line,
+        }
+    }
+
+    fn allows_comma(&self) -> bool {
+        !matches!(self, Entry::Comment(_))
+    }
+
+    fn render(&self, indent: usize, add_comma: bool, options: FormatOptions) -> String {
+        match self {
+            Entry::Field(field) => format_field(field, indent, add_comma, options),
+            Entry::Include(include) => format_include_stmt(include, add_comma),
+            Entry::Comment(comment) => comment.text.clone(),
+        }
+    }
+
+    fn render_inline(&self, options: FormatOptions) -> Option<String> {
+        match self {
+            Entry::Field(field) => format_field_inline(field, options),
+            Entry::Include(include) => format_include_stmt_inline(include),
+            Entry::Comment(_) => None,
+        }
+    }
+}
+
+impl BodyItem for Entry {
+    fn comment(comment: StandaloneComment) -> Self {
+        Entry::Comment(comment)
+    }
+
+    fn attach_trailing_comment(&mut self, comment: TrailingComment) {
+        Entry::attach_trailing_comment(self, comment);
+    }
+}
+
+impl ArrayItem {
+    fn attach_trailing_comment(&mut self, comment: TrailingComment) {
+        match self {
+            ArrayItem::Value {
+                trailing_comment, ..
+            } => *trailing_comment = Some(comment),
+            ArrayItem::Comment(_) => {}
+        }
+    }
+}
+
+impl CollectionItem for ArrayItem {
+    fn leading_blank_line(&self) -> bool {
+        match self {
+            ArrayItem::Value {
+                leading_blank_line, ..
+            } => *leading_blank_line,
+            ArrayItem::Comment(comment) => comment.leading_blank_line,
+        }
+    }
+
+    fn allows_comma(&self) -> bool {
+        matches!(self, ArrayItem::Value { .. })
+    }
+
+    fn render(&self, indent: usize, add_comma: bool, options: FormatOptions) -> String {
+        match self {
+            ArrayItem::Value {
+                value,
+                trailing_comment,
+                ..
+            } => {
+                let mut out = format_value(value, indent, indent, options);
+                push_trailing_comment(&mut out, trailing_comment.as_ref(), add_comma);
+                out
+            }
+            ArrayItem::Comment(comment) => comment.text.clone(),
+        }
+    }
+
+    fn render_inline(&self, options: FormatOptions) -> Option<String> {
+        match self {
+            ArrayItem::Value {
+                value,
+                trailing_comment,
+                ..
+            } => {
+                if trailing_comment.is_some() {
+                    return None;
+                }
+                format_value_inline(value, options)
+            }
+            ArrayItem::Comment(_) => None,
+        }
+    }
+}
+
+impl BodyItem for ArrayItem {
+    fn comment(comment: StandaloneComment) -> Self {
+        ArrayItem::Comment(comment)
+    }
+
+    fn attach_trailing_comment(&mut self, comment: TrailingComment) {
+        ArrayItem::attach_trailing_comment(self, comment);
+    }
+}
+
+impl Field {
+    fn operator(&self) -> &'static str {
+        match self.op {
+            FieldOp::Set => "=",
+            FieldOp::Append => "+=",
+        }
+    }
+
+    fn prefix(&self) -> String {
+        format!("{} {} ", format_path(&self.path, true), self.operator())
+    }
+}
+
+impl Include {
+    fn render(&self) -> String {
+        format!("include {}", self.target())
+    }
+
+    fn target(&self) -> String {
+        match self {
+            Include::Bare(path) => path.raw.clone(),
+            Include::File(path) => format!("file({})", path.raw),
+            Include::Url(path) => format!("url({})", path.raw),
+            Include::Classpath(path) => format!("classpath({})", path.raw),
+            Include::Required(inner) => format!("required({})", inner.target()),
+        }
+    }
+}
+
 pub fn format_hocon(input: &str) -> Result<String, ParseError> {
     format_hocon_with_options(input, FormatOptions::default())
 }
@@ -228,25 +394,11 @@ impl Document {
 fn format_root_entries(entries: &[Entry], options: FormatOptions) -> String {
     let mut out = String::new();
     for (index, entry) in entries.iter().enumerate() {
-        if index > 0 {
-            if entry_has_leading_blank_line(entry) {
-                out.push_str("\n\n");
-            } else {
-                out.push('\n');
-            }
-        }
-        out.push_str(&format_entry(entry, 0, false, options));
+        push_multiline_item_separator(&mut out, index, entry.leading_blank_line());
+        out.push_str(&entry.render(0, false, options));
     }
     out.push('\n');
     out
-}
-
-fn entry_has_leading_blank_line(entry: &Entry) -> bool {
-    match entry {
-        Entry::Field(field) => field.leading_blank_line,
-        Entry::Include(include) => include.leading_blank_line,
-        Entry::Comment(comment) => comment.leading_blank_line,
-    }
 }
 
 fn format_object(
@@ -269,30 +421,7 @@ fn format_object(
 }
 
 fn format_object_multiline(object: &ObjectValue, indent: usize, options: FormatOptions) -> String {
-    if object.entries.is_empty() {
-        return format!("{{\n{}}}", " ".repeat(indent));
-    }
-
-    let value_indices: Vec<usize> = object
-        .entries
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, entry)| (!matches!(entry, Entry::Comment(_))).then_some(idx))
-        .collect();
-
-    let mut out = String::new();
-    out.push_str("{\n");
-    for (index, entry) in object.entries.iter().enumerate() {
-        push_multiline_entry_separator(&mut out, index, entry_has_leading_blank_line(entry));
-        let entry_indent = indent + 2;
-        let add_comma = should_add_comma_for_item(index, &value_indices, options.comma_style);
-        out.push_str(&" ".repeat(entry_indent));
-        out.push_str(&format_entry(entry, entry_indent, add_comma, options));
-    }
-    out.push('\n');
-    out.push_str(&" ".repeat(indent));
-    out.push('}');
-    out
+    format_delimited_multiline(&object.entries, indent, "{", "}", options)
 }
 
 fn format_object_inline(object: &ObjectValue, options: FormatOptions) -> Option<String> {
@@ -300,16 +429,7 @@ fn format_object_inline(object: &ObjectValue, options: FormatOptions) -> Option<
         return None;
     }
 
-    let mut parts = Vec::new();
-    for entry in &object.entries {
-        parts.push(format_entry_inline(entry, options)?);
-    }
-
-    if parts.is_empty() {
-        Some("{}".to_string())
-    } else {
-        Some(format!("{{ {} }}", parts.join(", ")))
-    }
+    format_delimited_inline(&object.entries, "{}", "{ ", " }", options)
 }
 
 fn format_array(
@@ -332,30 +452,7 @@ fn format_array(
 }
 
 fn format_array_multiline(array: &ArrayValue, indent: usize, options: FormatOptions) -> String {
-    if array.items.is_empty() {
-        return format!("[\n{}]", " ".repeat(indent));
-    }
-
-    let value_indices: Vec<usize> = array
-        .items
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, item)| matches!(item, ArrayItem::Value { .. }).then_some(idx))
-        .collect();
-
-    let mut out = String::new();
-    out.push_str("[\n");
-    for (index, item) in array.items.iter().enumerate() {
-        push_multiline_entry_separator(&mut out, index, array_item_has_leading_blank_line(item));
-        let item_indent = indent + 2;
-        let add_comma = should_add_comma_for_item(index, &value_indices, options.comma_style);
-        out.push_str(&" ".repeat(item_indent));
-        out.push_str(&format_array_item(item, item_indent, add_comma, options));
-    }
-    out.push('\n');
-    out.push_str(&" ".repeat(indent));
-    out.push(']');
-    out
+    format_delimited_multiline(&array.items, indent, "[", "]", options)
 }
 
 fn format_array_inline(array: &ArrayValue, options: FormatOptions) -> Option<String> {
@@ -363,63 +460,92 @@ fn format_array_inline(array: &ArrayValue, options: FormatOptions) -> Option<Str
         return None;
     }
 
-    let mut parts = Vec::new();
-    for item in &array.items {
-        parts.push(format_array_item_inline(item, options)?);
-    }
-
-    if parts.is_empty() {
-        Some("[]".to_string())
-    } else {
-        Some(format!("[{}]", parts.join(", ")))
-    }
+    format_delimited_inline(&array.items, "[]", "[", "]", options)
 }
 
-fn format_array_item(
-    item: &ArrayItem,
+fn format_delimited_multiline<T: CollectionItem>(
+    items: &[T],
     indent: usize,
-    add_comma: bool,
+    open: &str,
+    close: &str,
     options: FormatOptions,
 ) -> String {
-    match item {
-        ArrayItem::Value {
-            value,
-            trailing_comment,
-            ..
-        } => {
-            let mut out = format_value(value, indent, indent, options);
-            push_trailing_comment(&mut out, trailing_comment.as_ref(), add_comma);
-            out
-        }
-        ArrayItem::Comment(comment) => comment.text.clone(),
+    let last_comma_index = items.iter().rposition(|item| item.allows_comma());
+
+    let mut out = String::new();
+    out.push_str(open);
+    out.push('\n');
+    for (index, item) in items.iter().enumerate() {
+        push_multiline_item_separator(&mut out, index, item.leading_blank_line());
+        let item_indent = indent + 2;
+        let add_comma = should_add_comma(
+            item.allows_comma(),
+            Some(index) == last_comma_index,
+            options.comma_style,
+        );
+        out.push_str(&" ".repeat(item_indent));
+        out.push_str(&item.render(item_indent, add_comma, options));
+    }
+    out.push('\n');
+    out.push_str(&" ".repeat(indent));
+    out.push_str(close);
+    out
+}
+
+fn format_delimited_inline<T: CollectionItem>(
+    items: &[T],
+    empty: &str,
+    open: &str,
+    close: &str,
+    options: FormatOptions,
+) -> Option<String> {
+    let parts = items
+        .iter()
+        .map(|item| item.render_inline(options))
+        .collect::<Option<Vec<_>>>()?;
+
+    if parts.is_empty() {
+        Some(empty.to_string())
+    } else {
+        Some(format!("{open}{}{close}", parts.join(", ")))
     }
 }
 
-fn format_entry(entry: &Entry, indent: usize, add_comma: bool, options: FormatOptions) -> String {
-    match entry {
-        Entry::Field(field) => {
-            let operator = match field.op {
-                FieldOp::Set => "=",
-                FieldOp::Append => "+=",
-            };
-            let prefix = format!("{} {} ", format_path(&field.path, true), operator);
-            let mut out = prefix.clone();
-            out.push_str(&format_value(
-                &field.value,
-                indent,
-                indent + text_width(&prefix),
-                options,
-            ));
-            push_trailing_comment(&mut out, field.trailing_comment.as_ref(), add_comma);
-            out
-        }
-        Entry::Include(include) => {
-            let mut out = format_include(&include.include);
-            push_trailing_comment(&mut out, include.trailing_comment.as_ref(), add_comma);
-            out
-        }
-        Entry::Comment(comment) => comment.text.clone(),
+fn format_field(field: &Field, indent: usize, add_comma: bool, options: FormatOptions) -> String {
+    let prefix = field.prefix();
+    let mut out = prefix.clone();
+    out.push_str(&format_value(
+        &field.value,
+        indent,
+        indent + text_width(&prefix),
+        options,
+    ));
+    push_trailing_comment(&mut out, field.trailing_comment.as_ref(), add_comma);
+    out
+}
+
+fn format_field_inline(field: &Field, options: FormatOptions) -> Option<String> {
+    if field.trailing_comment.is_some() {
+        return None;
     }
+
+    let mut out = field.prefix();
+    out.push_str(&format_value_inline(&field.value, options)?);
+    Some(out)
+}
+
+fn format_include_stmt(include: &IncludeStmt, add_comma: bool) -> String {
+    let mut out = include.include.render();
+    push_trailing_comment(&mut out, include.trailing_comment.as_ref(), add_comma);
+    out
+}
+
+fn format_include_stmt_inline(include: &IncludeStmt) -> Option<String> {
+    if include.trailing_comment.is_some() {
+        return None;
+    }
+
+    Some(include.include.render())
 }
 
 fn push_trailing_comment(
@@ -439,48 +565,7 @@ fn push_trailing_comment(
     }
 }
 
-fn format_entry_inline(entry: &Entry, options: FormatOptions) -> Option<String> {
-    match entry {
-        Entry::Field(field) => {
-            if field.trailing_comment.is_some() {
-                return None;
-            }
-
-            let operator = match field.op {
-                FieldOp::Set => "=",
-                FieldOp::Append => "+=",
-            };
-            let mut out = format!("{} {} ", format_path(&field.path, true), operator);
-            out.push_str(&format_value_inline(&field.value, options)?);
-            Some(out)
-        }
-        Entry::Include(include) => {
-            if include.trailing_comment.is_some() {
-                return None;
-            }
-            Some(format_include(&include.include))
-        }
-        Entry::Comment(_) => None,
-    }
-}
-
-fn format_array_item_inline(item: &ArrayItem, options: FormatOptions) -> Option<String> {
-    match item {
-        ArrayItem::Value {
-            value,
-            trailing_comment,
-            ..
-        } => {
-            if trailing_comment.is_some() {
-                return None;
-            }
-            format_value_inline(value, options)
-        }
-        ArrayItem::Comment(_) => None,
-    }
-}
-
-fn push_multiline_entry_separator(out: &mut String, index: usize, leading_blank_line: bool) {
+fn push_multiline_item_separator(out: &mut String, index: usize, leading_blank_line: bool) {
     if index > 0 {
         if leading_blank_line {
             out.push_str("\n\n");
@@ -490,44 +575,19 @@ fn push_multiline_entry_separator(out: &mut String, index: usize, leading_blank_
     }
 }
 
-fn array_item_has_leading_blank_line(item: &ArrayItem) -> bool {
-    match item {
-        ArrayItem::Value {
-            leading_blank_line, ..
-        } => *leading_blank_line,
-        ArrayItem::Comment(comment) => comment.leading_blank_line,
-    }
-}
-
-fn should_add_comma_for_item(
-    index: usize,
-    value_indices: &[usize],
+fn should_add_comma(
+    is_comma_eligible: bool,
+    is_last_comma_eligible: bool,
     comma_style: CommaStyle,
 ) -> bool {
-    if !value_indices.contains(&index) {
+    if !is_comma_eligible {
         return false;
     }
 
     match comma_style {
         CommaStyle::None => false,
-        CommaStyle::Commas => value_indices.last().copied() != Some(index),
+        CommaStyle::Commas => !is_last_comma_eligible,
         CommaStyle::Trailing => true,
-    }
-}
-
-fn format_include(include: &Include) -> String {
-    match include {
-        Include::Bare(path) => format!("include {}", path.raw),
-        Include::File(path) => format!("include file({})", path.raw),
-        Include::Url(path) => format!("include url({})", path.raw),
-        Include::Classpath(path) => format!("include classpath({})", path.raw),
-        Include::Required(inner) => match inner.as_ref() {
-            Include::Bare(path) => format!("include required({})", path.raw),
-            Include::File(path) => format!("include required(file({}))", path.raw),
-            Include::Url(path) => format!("include required(url({}))", path.raw),
-            Include::Classpath(path) => format!("include required(classpath({}))", path.raw),
-            Include::Required(_) => unreachable!("nested required() is normalized during parsing"),
-        },
     }
 }
 
@@ -642,37 +702,11 @@ fn format_path_segment(segment: &str, quote_include: bool) -> String {
 }
 
 fn is_safe_unquoted_path_segment(segment: &str) -> bool {
-    if segment.is_empty() || segment.contains("//") {
-        return false;
-    }
-
-    for ch in segment.chars() {
-        if ch == '.'
-            || ch == '$'
-            || ch == '"'
-            || ch == '{'
-            || ch == '}'
-            || ch == '['
-            || ch == ']'
-            || ch == ':'
-            || ch == '='
-            || ch == ','
-            || ch == '#'
-            || ch == '`'
-            || ch == '^'
-            || ch == '?'
-            || ch == '!'
-            || ch == '@'
-            || ch == '*'
-            || ch == '&'
-            || ch == '\\'
-            || ch.is_whitespace()
-        {
-            return false;
-        }
-    }
-
-    true
+    !segment.is_empty()
+        && !segment.contains("//")
+        && segment
+            .chars()
+            .all(|ch| !is_forbidden_unquoted_char(ch, true))
 }
 
 fn quote_string(value: &str) -> String {
@@ -781,8 +815,7 @@ impl<'a> Parser<'a> {
         let mut entries = Vec::new();
         let mut leading_blank_line = self.consume_layout_without_comments() > 1;
         loop {
-            leading_blank_line =
-                self.collect_standalone_comments_into_entries(&mut entries, leading_blank_line);
+            leading_blank_line = self.collect_standalone_comments(&mut entries, leading_blank_line);
 
             if terminator.is_none() && self.peek_char() == Some('}') {
                 return Err(self.error("unexpected closing '}' in implicit root object"));
@@ -793,17 +826,18 @@ impl<'a> Parser<'a> {
             }
 
             let mut entry = self.parse_entry()?;
-            Self::set_entry_leading_blank_line(&mut entry, leading_blank_line);
+            entry.set_leading_blank_line(leading_blank_line);
             entries.push(entry);
             if let Some(comment) = self.consume_inline_comment_suffix() {
-                Self::attach_trailing_comment_to_entry(entries.last_mut().unwrap(), comment);
+                entries.last_mut().unwrap().attach_trailing_comment(comment);
             }
 
             if self.is_object_end(terminator) {
                 break;
             }
 
-            let separator = self.consume_body_separator_into_entries(&mut entries)?;
+            let separator = self
+                .consume_body_separator(&mut entries, "unexpected comma between object entries")?;
             leading_blank_line = separator.leading_blank_line;
             if terminator.is_none() && self.peek_char() == Some('}') {
                 return Err(self.error("unexpected closing '}' in implicit root object"));
@@ -832,8 +866,7 @@ impl<'a> Parser<'a> {
         let mut items = Vec::new();
         let mut leading_blank_line = self.consume_layout_without_comments() > 1;
         loop {
-            leading_blank_line =
-                self.collect_standalone_comments_into_array_items(&mut items, leading_blank_line);
+            leading_blank_line = self.collect_standalone_comments(&mut items, leading_blank_line);
 
             if self.peek_char() == Some(']') {
                 break;
@@ -846,14 +879,15 @@ impl<'a> Parser<'a> {
                 trailing_comment: None,
             });
             if let Some(comment) = self.consume_inline_comment_suffix() {
-                Self::attach_trailing_comment_to_array_item(items.last_mut().unwrap(), comment);
+                items.last_mut().unwrap().attach_trailing_comment(comment);
             }
 
             if self.peek_char() == Some(']') {
                 break;
             }
 
-            let separator = self.consume_body_separator_into_array_items(&mut items)?;
+            let separator =
+                self.consume_body_separator(&mut items, "unexpected comma between array elements")?;
             leading_blank_line = separator.leading_blank_line;
             if self.peek_char() == Some(']') {
                 break;
@@ -998,23 +1032,29 @@ impl<'a> Parser<'a> {
         if items.len() == 1 {
             Ok(Value::Single(items.pop().unwrap().part))
         } else {
-            let mut concat_kind = None;
-            for item in &items {
-                let Some(kind) = classify_value_part_for_concat(&item.part) else {
-                    continue;
-                };
-
-                match concat_kind {
-                    Some(existing) if existing != kind => {
-                        return Err(self.error("invalid mixed-type value concatenation"));
-                    }
-                    Some(_) => {}
-                    None => concat_kind = Some(kind),
-                }
-            }
-
+            self.validate_concat_items(&items)?;
             Ok(Value::Concat(items))
         }
+    }
+
+    fn validate_concat_items(&self, items: &[ConcatItem]) -> Result<(), ParseError> {
+        let mut concat_kind = None;
+
+        for item in items {
+            let Some(kind) = classify_value_part_for_concat(&item.part) else {
+                continue;
+            };
+
+            match concat_kind {
+                Some(existing) if existing != kind => {
+                    return Err(self.error("invalid mixed-type value concatenation"));
+                }
+                Some(_) => {}
+                None => concat_kind = Some(kind),
+            }
+        }
+
+        Ok(())
     }
 
     fn parse_value_part(&mut self) -> Result<ValuePart, ParseError> {
@@ -1196,30 +1236,7 @@ impl<'a> Parser<'a> {
         let start = self.pos;
 
         while let Some(ch) = self.peek_char() {
-            if self.starts_comment() || ch == '\n' || ch.is_whitespace() {
-                break;
-            }
-            if ch == '$'
-                || ch == '"'
-                || ch == '{'
-                || ch == '}'
-                || ch == '['
-                || ch == ']'
-                || ch == ':'
-                || ch == '='
-                || ch == ','
-                || ch == '#'
-                || ch == '`'
-                || ch == '^'
-                || ch == '?'
-                || ch == '!'
-                || ch == '@'
-                || ch == '*'
-                || ch == '&'
-                || ch == '\\'
-                || ch == '+'
-                || (stop_at_dot && ch == '.')
-            {
+            if self.starts_comment() || is_forbidden_unquoted_char(ch, stop_at_dot) {
                 break;
             }
 
@@ -1350,55 +1367,23 @@ impl<'a> Parser<'a> {
     }
 
     fn can_start_simple_atom(&self) -> bool {
-        if self.match_keyword_atom().is_some() {
-            return true;
-        }
-        if matches!(self.peek_char(), Some(ch) if ch.is_ascii_digit() || ch == '-') {
-            return true;
-        }
-        self.can_start_unquoted(false)
+        self.can_start_scalar_token(false, false)
     }
 
     fn can_start_path_token(&self) -> bool {
-        if self.peek_char() == Some('"') {
-            return true;
-        }
-        if self.match_keyword_atom().is_some() {
-            return true;
-        }
-        if matches!(self.peek_char(), Some(ch) if ch.is_ascii_digit() || ch == '-') {
-            return true;
-        }
-        self.can_start_unquoted(true)
+        self.can_start_scalar_token(true, true)
+    }
+
+    fn can_start_scalar_token(&self, stop_at_dot: bool, allow_quoted: bool) -> bool {
+        (allow_quoted && self.peek_char() == Some('"'))
+            || self.match_keyword_atom().is_some()
+            || matches!(self.peek_char(), Some(ch) if ch.is_ascii_digit() || ch == '-')
+            || self.can_start_unquoted(stop_at_dot)
     }
 
     fn can_start_unquoted(&self, stop_at_dot: bool) -> bool {
         match self.peek_char() {
-            Some(ch) => {
-                !ch.is_whitespace()
-                    && ch != '\n'
-                    && ch != '$'
-                    && ch != '"'
-                    && ch != '{'
-                    && ch != '}'
-                    && ch != '['
-                    && ch != ']'
-                    && ch != ':'
-                    && ch != '='
-                    && ch != ','
-                    && ch != '#'
-                    && ch != '`'
-                    && ch != '^'
-                    && ch != '?'
-                    && ch != '!'
-                    && ch != '@'
-                    && ch != '*'
-                    && ch != '&'
-                    && ch != '\\'
-                    && ch != '+'
-                    && !(stop_at_dot && ch == '.')
-                    && !self.starts_comment()
-            }
+            Some(ch) => !is_forbidden_unquoted_char(ch, stop_at_dot) && !self.starts_comment(),
             None => false,
         }
     }
@@ -1414,9 +1399,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn consume_body_separator_into_entries(
+    fn consume_body_separator<T: BodyItem>(
         &mut self,
-        entries: &mut Vec<Entry>,
+        items: &mut Vec<T>,
+        unexpected_comma_message: &str,
     ) -> Result<EntrySeparator, ParseError> {
         let mut state = SeparatorState::Start;
         let mut newline_count = 0;
@@ -1429,7 +1415,7 @@ impl<'a> Parser<'a> {
                     state,
                     SeparatorState::SawComma | SeparatorState::SawCommaThenNewline
                 ) {
-                    return Err(self.error("unexpected comma between object entries"));
+                    return Err(self.error(unexpected_comma_message));
                 }
                 self.pos += 1;
                 newline_count = 0;
@@ -1440,14 +1426,14 @@ impl<'a> Parser<'a> {
             if self.starts_comment() {
                 let comment = self.consume_comment_text();
                 if state == SeparatorState::SawComma {
-                    Self::attach_trailing_comment_to_entry(
-                        entries.last_mut().unwrap(),
-                        TrailingComment {
+                    items
+                        .last_mut()
+                        .unwrap()
+                        .attach_trailing_comment(TrailingComment {
                             text: format!("{}{}", ws, comment),
-                        },
-                    );
+                        });
                 } else {
-                    entries.push(Entry::Comment(StandaloneComment {
+                    items.push(T::comment(StandaloneComment {
                         text: comment,
                         leading_blank_line: newline_count > 1,
                     }));
@@ -1477,72 +1463,9 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn consume_body_separator_into_array_items(
+    fn collect_standalone_comments<T: BodyItem>(
         &mut self,
-        items: &mut Vec<ArrayItem>,
-    ) -> Result<EntrySeparator, ParseError> {
-        let mut state = SeparatorState::Start;
-        let mut newline_count = 0;
-
-        loop {
-            let ws = self.consume_inline_whitespace();
-
-            if self.peek_char() == Some(',') {
-                if matches!(
-                    state,
-                    SeparatorState::SawComma | SeparatorState::SawCommaThenNewline
-                ) {
-                    return Err(self.error("unexpected comma between array elements"));
-                }
-                self.pos += 1;
-                newline_count = 0;
-                state = SeparatorState::SawComma;
-                continue;
-            }
-
-            if self.starts_comment() {
-                let comment = self.consume_comment_text();
-                if state == SeparatorState::SawComma {
-                    Self::attach_trailing_comment_to_array_item(
-                        items.last_mut().unwrap(),
-                        TrailingComment {
-                            text: format!("{}{}", ws, comment),
-                        },
-                    );
-                } else {
-                    items.push(ArrayItem::Comment(StandaloneComment {
-                        text: comment,
-                        leading_blank_line: newline_count > 1,
-                    }));
-                    newline_count = 0;
-                }
-                continue;
-            }
-
-            if self.peek_char() == Some('\n') {
-                self.pos += 1;
-                newline_count += 1;
-                state = match state {
-                    SeparatorState::SawComma | SeparatorState::SawCommaThenNewline => {
-                        SeparatorState::SawCommaThenNewline
-                    }
-                    _ => SeparatorState::SawNewline,
-                };
-                continue;
-            }
-
-            break;
-        }
-
-        Ok(EntrySeparator {
-            had_separator: state != SeparatorState::Start,
-            leading_blank_line: newline_count > 1,
-        })
-    }
-
-    fn collect_standalone_comments_into_entries(
-        &mut self,
-        entries: &mut Vec<Entry>,
+        items: &mut Vec<T>,
         mut leading_blank_line: bool,
     ) -> bool {
         loop {
@@ -1550,25 +1473,7 @@ impl<'a> Parser<'a> {
             if !self.starts_comment() {
                 return leading_blank_line;
             }
-            entries.push(Entry::Comment(StandaloneComment {
-                text: self.consume_comment_text(),
-                leading_blank_line,
-            }));
-            leading_blank_line = false;
-        }
-    }
-
-    fn collect_standalone_comments_into_array_items(
-        &mut self,
-        items: &mut Vec<ArrayItem>,
-        mut leading_blank_line: bool,
-    ) -> bool {
-        loop {
-            leading_blank_line |= self.consume_layout_without_comments() > 1;
-            if !self.starts_comment() {
-                return leading_blank_line;
-            }
-            items.push(ArrayItem::Comment(StandaloneComment {
+            items.push(T::comment(StandaloneComment {
                 text: self.consume_comment_text(),
                 leading_blank_line,
             }));
@@ -1586,31 +1491,6 @@ impl<'a> Parser<'a> {
         }
         self.pos = before;
         None
-    }
-
-    fn attach_trailing_comment_to_entry(entry: &mut Entry, comment: TrailingComment) {
-        match entry {
-            Entry::Field(field) => field.trailing_comment = Some(comment),
-            Entry::Include(include) => include.trailing_comment = Some(comment),
-            Entry::Comment(_) => {}
-        }
-    }
-
-    fn set_entry_leading_blank_line(entry: &mut Entry, leading_blank_line: bool) {
-        match entry {
-            Entry::Field(field) => field.leading_blank_line = leading_blank_line,
-            Entry::Include(include) => include.leading_blank_line = leading_blank_line,
-            Entry::Comment(comment) => comment.leading_blank_line = leading_blank_line,
-        }
-    }
-
-    fn attach_trailing_comment_to_array_item(item: &mut ArrayItem, comment: TrailingComment) {
-        match item {
-            ArrayItem::Value {
-                trailing_comment, ..
-            } => *trailing_comment = Some(comment),
-            ArrayItem::Comment(_) => {}
-        }
     }
 
     fn consume_ws_or_comment_separator(&mut self) -> bool {
@@ -1842,6 +1722,33 @@ fn decode_quoted_string(raw: &str) -> Result<String, ParseError> {
     }
 
     Ok(out)
+}
+
+fn is_forbidden_unquoted_char(ch: char, stop_at_dot: bool) -> bool {
+    ch == '\n'
+        || ch.is_whitespace()
+        || matches!(
+            ch,
+            '$' | '"'
+                | '{'
+                | '}'
+                | '['
+                | ']'
+                | ':'
+                | '='
+                | ','
+                | '#'
+                | '`'
+                | '^'
+                | '?'
+                | '!'
+                | '@'
+                | '*'
+                | '&'
+                | '\\'
+                | '+'
+        )
+        || (stop_at_dot && ch == '.')
 }
 
 fn is_inline_whitespace(ch: char) -> bool {
