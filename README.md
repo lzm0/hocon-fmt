@@ -134,7 +134,7 @@ The test suite includes:
 
 ## Upstream Test Fixtures
 
-This repository includes copied test fixtures from `lightbend/config` under [`tests/fixtures/lightbend-config`](./tests/fixtures/lightbend-config). See [`tests/fixtures/lightbend-config/README.md`](./tests/fixtures/lightbend-config/README.md) for the source commit and licensing details.
+This repository includes snapshot fixtures ported from `lightbend/config` under [`tests/fixtures/format`](./tests/fixtures/format).
 
 ## License
 
