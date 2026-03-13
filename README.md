@@ -1,4 +1,4 @@
-# hocon-fmt
+# hoconfmt
 
 A HOCON formatter written in Rust.
 
@@ -34,36 +34,36 @@ cargo install --path .
 
 ## CLI
 
-By default, `hocon-fmt` reads a single input and writes the formatted result to stdout.
+By default, `hoconfmt` reads a single input and writes the formatted result to stdout.
 
 ### Read from stdin
 
 ```bash
-cat application.conf | hocon-fmt
+cat application.conf | hoconfmt
 ```
 
 ### Format a file to stdout
 
 ```bash
-hocon-fmt application.conf
+hoconfmt application.conf
 ```
 
 ### Write changes in place
 
 ```bash
-hocon-fmt --write application.conf
+hoconfmt --write application.conf
 ```
 
 ### Format all `.conf` files in the current working directory
 
 ```bash
-find . -type f -name '*.conf' -exec hocon-fmt --write {} +
+find . -type f -name '*.conf' -exec hoconfmt --write {} +
 ```
 
 ### Check formatting without modifying files
 
 ```bash
-hocon-fmt --check application.conf
+hoconfmt --check application.conf
 ```
 
 If a file would be reformatted, the command exits with status code `1`.
@@ -71,7 +71,7 @@ If a file would be reformatted, the command exits with status code `1`.
 ### Write to a different file
 
 ```bash
-hocon-fmt --output formatted.conf application.conf
+hoconfmt --output formatted.conf application.conf
 ```
 
 ### Comma style
@@ -88,9 +88,9 @@ The formatter supports three separator styles for objects and arrays:
 Examples:
 
 ```bash
-hocon-fmt --commas none application.conf
-hocon-fmt --commas commas application.conf
-hocon-fmt --commas trailing application.conf
+hoconfmt --commas none application.conf
+hoconfmt --commas commas application.conf
+hoconfmt --commas trailing application.conf
 ```
 
 ### Max width
@@ -104,14 +104,14 @@ multiline.
 Examples:
 
 ```bash
-hocon-fmt --max-width 80 application.conf
-hocon-fmt --max-width 40 application.conf
+hoconfmt --max-width 80 application.conf
+hoconfmt --max-width 40 application.conf
 ```
 
 ## Library Usage
 
 ```rust
-use hocon_fmt::{format_hocon, format_hocon_with_options, CommaStyle, FormatOptions};
+use hoconfmt::{format_hocon, format_hocon_with_options, CommaStyle, FormatOptions};
 
 let formatted = format_hocon("a:{b=1}")?;
 

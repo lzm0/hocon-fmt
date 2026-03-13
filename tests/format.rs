@@ -1,6 +1,6 @@
 mod support;
 
-use hocon_fmt::{CommaStyle, FormatOptions, format_hocon, format_hocon_with_options};
+use hoconfmt::{CommaStyle, FormatOptions, format_hocon, format_hocon_with_options};
 use support::{read_fixture, read_input_fixture};
 
 const LIGHTBEND_FORMAT_CASES: &[&str] = &[

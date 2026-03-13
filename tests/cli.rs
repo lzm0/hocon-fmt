@@ -13,14 +13,14 @@ fn fixture_file(case: &str, kind: &str) -> String {
 }
 
 fn binary_path() -> PathBuf {
-    std::env::var_os("CARGO_BIN_EXE_hocon-fmt")
-        .or_else(|| std::env::var_os("CARGO_BIN_EXE_hocon_fmt"))
+    std::env::var_os("CARGO_BIN_EXE_hoconfmt")
+        .or_else(|| std::env::var_os("CARGO_BIN_EXE_hoconfmt"))
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("target")
                 .join("debug")
-                .join(format!("hocon-fmt{}", std::env::consts::EXE_SUFFIX))
+                .join(format!("hoconfmt{}", std::env::consts::EXE_SUFFIX))
         })
 }
 
@@ -54,7 +54,7 @@ fn unique_temp_dir() -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("clock drift")
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("hocon-fmt-cli-{}-{}", std::process::id(), nonce));
+    let dir = std::env::temp_dir().join(format!("hoconfmt-cli-{}-{}", std::process::id(), nonce));
     fs::create_dir_all(&dir).expect("failed to create temp dir");
     dir
 }

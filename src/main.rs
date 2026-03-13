@@ -3,7 +3,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use clap::{CommandFactory, Parser, ValueEnum};
-use hocon_fmt::{CommaStyle, FormatOptions, format_hocon_with_options};
+use hoconfmt::{CommaStyle, FormatOptions, format_hocon_with_options};
 
 #[derive(Debug, Parser)]
 #[command(
