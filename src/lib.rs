@@ -92,7 +92,7 @@ enum Root {
 enum Entry {
     Field(Field),
     Include(IncludeStmt),
-    Comment(String),
+    Comment(StandaloneComment),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,12 +101,18 @@ enum ArrayItem {
         value: Value,
         trailing_comment: Option<TrailingComment>,
     },
-    Comment(String),
+    Comment(StandaloneComment),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TrailingComment {
     text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StandaloneComment {
+    text: String,
+    leading_blank_line: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -217,22 +223,41 @@ impl Document {
 }
 
 fn format_root_entries(entries: &[Entry], options: FormatOptions) -> String {
+    let formatted_entries: Vec<String> = entries
+        .iter()
+        .map(|entry| format_entry(entry, 0, false, options))
+        .collect();
+
     let mut out = String::new();
-    for (index, entry) in entries.iter().enumerate() {
+    for (index, (entry, formatted_entry)) in entries.iter().zip(formatted_entries.iter()).enumerate() {
         if index > 0 {
-            if should_insert_blank_line_between_root_entries(&entries[index - 1], entry) {
+            if should_insert_blank_line_between_root_entries(
+                &entries[index - 1],
+                entry,
+                &formatted_entries[index - 1],
+            ) {
                 out.push_str("\n\n");
             } else {
                 out.push('\n');
             }
         }
-        out.push_str(&format_entry(entry, 0, false, options));
+        out.push_str(formatted_entry);
     }
     out.push('\n');
     out
 }
 
-fn should_insert_blank_line_between_root_entries(previous: &Entry, current: &Entry) -> bool {
+fn should_insert_blank_line_between_root_entries(
+    previous: &Entry,
+    current: &Entry,
+    previous_formatted: &str,
+) -> bool {
+    if let Entry::Comment(comment) = current {
+        return comment.leading_blank_line
+            || (!matches!(previous, Entry::Comment(_) | Entry::Include(_))
+                && previous_formatted.contains('\n'));
+    }
+
     let prev_non_comment = !matches!(previous, Entry::Comment(_));
     let current_non_comment = !matches!(current, Entry::Comment(_));
     prev_non_comment
@@ -377,7 +402,7 @@ fn format_array_item(
             push_trailing_comment(&mut out, trailing_comment.as_ref(), add_comma);
             out
         }
-        ArrayItem::Comment(comment) => comment.clone(),
+        ArrayItem::Comment(comment) => comment.text.clone(),
     }
 }
 
@@ -404,7 +429,7 @@ fn format_entry(entry: &Entry, indent: usize, add_comma: bool, options: FormatOp
             push_trailing_comment(&mut out, include.trailing_comment.as_ref(), add_comma);
             out
         }
-        Entry::Comment(comment) => comment.clone(),
+        Entry::Comment(comment) => comment.text.clone(),
     }
 }
 
@@ -1373,6 +1398,7 @@ impl<'a> Parser<'a> {
         entries: &mut Vec<Entry>,
     ) -> Result<bool, ParseError> {
         let mut state = SeparatorState::Start;
+        let mut newline_count = 0;
 
         loop {
             let ws = self.consume_inline_whitespace();
@@ -1396,13 +1422,18 @@ impl<'a> Parser<'a> {
                         },
                     );
                 } else {
-                    entries.push(Entry::Comment(comment));
+                    entries.push(Entry::Comment(StandaloneComment {
+                        text: comment,
+                        leading_blank_line: newline_count > 1,
+                    }));
+                    newline_count = 0;
                 }
                 continue;
             }
 
             if self.peek_char() == Some('\n') {
                 self.pos += 1;
+                newline_count += 1;
                 state = SeparatorState::SawNewline;
                 continue;
             }
@@ -1418,6 +1449,7 @@ impl<'a> Parser<'a> {
         items: &mut Vec<ArrayItem>,
     ) -> Result<bool, ParseError> {
         let mut state = SeparatorState::Start;
+        let mut newline_count = 0;
 
         loop {
             let ws = self.consume_inline_whitespace();
@@ -1441,13 +1473,18 @@ impl<'a> Parser<'a> {
                         },
                     );
                 } else {
-                    items.push(ArrayItem::Comment(comment));
+                    items.push(ArrayItem::Comment(StandaloneComment {
+                        text: comment,
+                        leading_blank_line: newline_count > 1,
+                    }));
+                    newline_count = 0;
                 }
                 continue;
             }
 
             if self.peek_char() == Some('\n') {
                 self.pos += 1;
+                newline_count += 1;
                 state = SeparatorState::SawNewline;
                 continue;
             }
@@ -1460,29 +1497,27 @@ impl<'a> Parser<'a> {
 
     fn collect_standalone_comments_into_entries(&mut self, entries: &mut Vec<Entry>) {
         loop {
-            self.skip_layout_without_comments();
+            let leading_blank_line = self.consume_layout_without_comments() > 1;
             if !self.starts_comment() {
                 break;
             }
-            entries.push(Entry::Comment(self.consume_comment_text()));
-            self.skip_layout_without_comments();
-            if self.peek_char() == Some('\n') {
-                self.pos += 1;
-            }
+            entries.push(Entry::Comment(StandaloneComment {
+                text: self.consume_comment_text(),
+                leading_blank_line,
+            }));
         }
     }
 
     fn collect_standalone_comments_into_array_items(&mut self, items: &mut Vec<ArrayItem>) {
         loop {
-            self.skip_layout_without_comments();
+            let leading_blank_line = self.consume_layout_without_comments() > 1;
             if !self.starts_comment() {
                 break;
             }
-            items.push(ArrayItem::Comment(self.consume_comment_text()));
-            self.skip_layout_without_comments();
-            if self.peek_char() == Some('\n') {
-                self.pos += 1;
-            }
+            items.push(ArrayItem::Comment(StandaloneComment {
+                text: self.consume_comment_text(),
+                leading_blank_line,
+            }));
         }
     }
 
@@ -1580,17 +1615,26 @@ impl<'a> Parser<'a> {
     }
 
     fn skip_layout_without_comments(&mut self) {
+        self.consume_layout_without_comments();
+    }
+
+    fn consume_layout_without_comments(&mut self) -> usize {
+        let mut newline_count = 0;
+
         loop {
             let before = self.pos;
             let _ = self.consume_inline_whitespace();
             while self.peek_char() == Some('\n') {
                 self.pos += 1;
+                newline_count += 1;
                 let _ = self.consume_inline_whitespace();
             }
             if self.pos == before {
                 break;
             }
         }
+
+        newline_count
     }
 
     fn starts_comment(&self) -> bool {

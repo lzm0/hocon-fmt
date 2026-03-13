@@ -42,6 +42,7 @@ fn assert_formats(case: &str) {
     let expected = read_fixture(&fixture_file(case, "expected"));
 
     assert_eq!(format_hocon(&input).unwrap(), expected);
+    assert_eq!(format_hocon(&expected).unwrap(), expected);
 }
 
 fn assert_formats_with_options(case: &str, options: FormatOptions) {
@@ -52,10 +53,15 @@ fn assert_formats_with_options(case: &str, options: FormatOptions) {
         format_hocon_with_options(&input, options).unwrap(),
         expected
     );
+    assert_eq!(
+        format_hocon_with_options(&expected, options).unwrap(),
+        expected
+    );
 }
 
 fn assert_formats_to(input: &str, expected: &str) {
     assert_eq!(format_hocon(input).unwrap(), expected);
+    assert_eq!(format_hocon(expected).unwrap(), expected);
 }
 
 #[test]
@@ -157,6 +163,11 @@ fn does_not_insert_blank_lines_between_root_includes() {
 #[test]
 fn preserves_root_level_comments() {
     assert_formats("root_level_comments");
+}
+
+#[test]
+fn preserves_blank_lines_before_root_level_comments() {
+    assert_formats("root_level_blank_line_before_comment");
 }
 
 #[test]
