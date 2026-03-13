@@ -229,7 +229,9 @@ fn format_root_entries(entries: &[Entry], options: FormatOptions) -> String {
         .collect();
 
     let mut out = String::new();
-    for (index, (entry, formatted_entry)) in entries.iter().zip(formatted_entries.iter()).enumerate() {
+    for (index, (entry, formatted_entry)) in
+        entries.iter().zip(formatted_entries.iter()).enumerate()
+    {
         if index > 0 {
             if should_insert_blank_line_between_root_entries(
                 &entries[index - 1],
@@ -714,6 +716,7 @@ enum SeparatorState {
     Start,
     SawComma,
     SawNewline,
+    SawCommaThenNewline,
 }
 
 impl<'a> Parser<'a> {
@@ -1404,7 +1407,10 @@ impl<'a> Parser<'a> {
             let ws = self.consume_inline_whitespace();
 
             if self.peek_char() == Some(',') {
-                if state != SeparatorState::Start {
+                if matches!(
+                    state,
+                    SeparatorState::SawComma | SeparatorState::SawCommaThenNewline
+                ) {
                     return Err(self.error("unexpected comma between object entries"));
                 }
                 self.pos += 1;
@@ -1434,7 +1440,12 @@ impl<'a> Parser<'a> {
             if self.peek_char() == Some('\n') {
                 self.pos += 1;
                 newline_count += 1;
-                state = SeparatorState::SawNewline;
+                state = match state {
+                    SeparatorState::SawComma | SeparatorState::SawCommaThenNewline => {
+                        SeparatorState::SawCommaThenNewline
+                    }
+                    _ => SeparatorState::SawNewline,
+                };
                 continue;
             }
 
@@ -1455,7 +1466,10 @@ impl<'a> Parser<'a> {
             let ws = self.consume_inline_whitespace();
 
             if self.peek_char() == Some(',') {
-                if state != SeparatorState::Start {
+                if matches!(
+                    state,
+                    SeparatorState::SawComma | SeparatorState::SawCommaThenNewline
+                ) {
                     return Err(self.error("unexpected comma between array elements"));
                 }
                 self.pos += 1;
@@ -1485,7 +1499,12 @@ impl<'a> Parser<'a> {
             if self.peek_char() == Some('\n') {
                 self.pos += 1;
                 newline_count += 1;
-                state = SeparatorState::SawNewline;
+                state = match state {
+                    SeparatorState::SawComma | SeparatorState::SawCommaThenNewline => {
+                        SeparatorState::SawCommaThenNewline
+                    }
+                    _ => SeparatorState::SawNewline,
+                };
                 continue;
             }
 

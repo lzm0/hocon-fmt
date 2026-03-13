@@ -191,6 +191,11 @@ fn preserves_newline_comments_after_commas() {
 }
 
 #[test]
+fn accepts_commas_on_their_own_line_between_elements() {
+    assert_formats("commas_on_their_own_line");
+}
+
+#[test]
 fn places_commas_before_inline_comments_when_enabled() {
     assert_formats_with_options(
         "commas_before_inline_comments",
@@ -319,10 +324,10 @@ fn rejects_repeated_or_misplaced_commas() {
         "[1,2,3,,]",
         "[,1,2,3]",
         "[1,,2,3]",
-        "[1\n,2]",
+        "[1,\n,2]",
         "{ a : 1,, }",
         "{ , a : 1 }",
-        "{ a : 1\n, b : 2 }",
+        "{ a : 1,\n, b : 2 }",
     ] {
         assert!(
             format_hocon(input).is_err(),
