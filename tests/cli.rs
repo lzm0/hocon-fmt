@@ -1,10 +1,16 @@
+mod support;
+
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use indoc::indoc;
+use support::{read_fixture, read_input_fixture};
+
+fn fixture_file(case: &str, kind: &str) -> String {
+    format!("cli/{case}/{kind}.conf")
+}
 
 fn binary_path() -> PathBuf {
     std::env::var_os("CARGO_BIN_EXE_hocon-fmt")
@@ -55,76 +61,76 @@ fn unique_temp_dir() -> PathBuf {
 
 #[test]
 fn formats_stdin_to_stdout_when_no_file_is_given() {
-    let output = run_cli(&[], Some("a:{b=1}"));
+    let input = read_input_fixture(&fixture_file(
+        "formats_stdin_to_stdout_when_no_file_is_given",
+        "input",
+    ));
+    let output = run_cli(&[], Some(&input));
 
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        indoc! {"
-            a = {
-              b = 1
-            }
-        "}
+        read_fixture(&fixture_file(
+            "formats_stdin_to_stdout_when_no_file_is_given",
+            "expected",
+        ))
     );
     assert!(String::from_utf8(output.stderr).unwrap().is_empty());
 }
 
 #[test]
 fn formats_with_no_commas_when_requested() {
-    let output = run_cli(&["--commas", "none"], Some("a:{b=1,c:[2,3]}"));
+    let input = read_input_fixture(&fixture_file(
+        "formats_with_no_commas_when_requested",
+        "input",
+    ));
+    let output = run_cli(&["--commas", "none"], Some(&input));
 
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        indoc! {"
-            a = {
-              b = 1
-              c = [
-                2
-                3
-              ]
-            }
-        "}
+        read_fixture(&fixture_file(
+            "formats_with_no_commas_when_requested",
+            "expected",
+        ))
     );
     assert!(String::from_utf8(output.stderr).unwrap().is_empty());
 }
 
 #[test]
 fn formats_with_standard_commas_when_requested() {
-    let output = run_cli(&["--commas", "commas"], Some("a:{b=1,c:[2,3]}"));
+    let input = read_input_fixture(&fixture_file(
+        "formats_with_standard_commas_when_requested",
+        "input",
+    ));
+    let output = run_cli(&["--commas", "commas"], Some(&input));
 
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        indoc! {"
-            a = {
-              b = 1,
-              c = [
-                2,
-                3
-              ]
-            }
-        "}
+        read_fixture(&fixture_file(
+            "formats_with_standard_commas_when_requested",
+            "expected",
+        ))
     );
     assert!(String::from_utf8(output.stderr).unwrap().is_empty());
 }
 
 #[test]
 fn formats_with_trailing_commas_when_requested() {
-    let output = run_cli(&["--commas", "trailing"], Some("{a=1,b=[2,3]}"));
+    let input = read_input_fixture(&fixture_file(
+        "formats_with_trailing_commas_when_requested",
+        "input",
+    ));
+    let output = run_cli(&["--commas", "trailing"], Some(&input));
 
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        indoc! {"
-            {
-              a = 1,
-              b = [
-                2,
-                3,
-              ],
-            }
-        "}
+        read_fixture(&fixture_file(
+            "formats_with_trailing_commas_when_requested",
+            "expected",
+        ))
     );
     assert!(String::from_utf8(output.stderr).unwrap().is_empty());
 }
@@ -150,18 +156,21 @@ fn check_mode_reports_unformatted_files() {
 fn write_mode_formats_files_in_place() {
     let dir = unique_temp_dir();
     let file = dir.join("input.conf");
-    fs::write(&file, "a:{b=1}").unwrap();
+    fs::write(
+        &file,
+        read_input_fixture(&fixture_file("write_mode_formats_files_in_place", "input")),
+    )
+    .unwrap();
 
     let output = run_cli(&["--write", file.to_str().unwrap()], None);
 
     assert!(output.status.success());
     assert_eq!(
         fs::read_to_string(&file).unwrap(),
-        indoc! {"
-            a = {
-              b = 1
-            }
-        "}
+        read_fixture(&fixture_file(
+            "write_mode_formats_files_in_place",
+            "expected"
+        ))
     );
     assert!(
         String::from_utf8(output.stderr)
@@ -177,7 +186,11 @@ fn output_mode_writes_to_a_different_file() {
     let dir = unique_temp_dir();
     let input = dir.join("input.conf");
     let output_path = dir.join("output.conf");
-    fs::write(&input, "a:{b=1}").unwrap();
+    let original = read_input_fixture(&fixture_file(
+        "output_mode_writes_to_a_different_file",
+        "input",
+    ));
+    fs::write(&input, &original).unwrap();
 
     let output = run_cli(
         &[
@@ -192,13 +205,12 @@ fn output_mode_writes_to_a_different_file() {
     assert!(String::from_utf8(output.stdout).unwrap().is_empty());
     assert_eq!(
         fs::read_to_string(&output_path).unwrap(),
-        indoc! {"
-            a = {
-              b = 1
-            }
-        "}
+        read_fixture(&fixture_file(
+            "output_mode_writes_to_a_different_file",
+            "expected"
+        ))
     );
-    assert_eq!(fs::read_to_string(&input).unwrap(), "a:{b=1}");
+    assert_eq!(fs::read_to_string(&input).unwrap(), original);
 
     fs::remove_dir_all(dir).unwrap();
 }

@@ -1,0 +1,292 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
+mod support;
+
+use hocon_fmt::{CommaStyle, FormatOptions, format_hocon, format_hocon_with_options};
+use support::{read_fixture, read_input_fixture};
+
+const PORTED_EQUIV_CASES: &[&str] = &[
+    "equiv01/comments.conf",
+    "equiv01/equals.conf",
+    "equiv01/no-commas.conf",
+    "equiv01/no-root-braces.conf",
+    "equiv01/no-whitespace.json",
+    "equiv01/omit-colons.conf",
+    "equiv01/path-keys.conf",
+    "equiv01/properties-style.conf",
+    "equiv01/substitutions.conf",
+    "equiv01/unquoted.conf",
+    "equiv02/path-keys.conf",
+    "equiv02/path-keys-weird-whitespace.conf",
+    "equiv03/includes.conf",
+    "equiv04/missing-substitutions.conf",
+    "equiv05/triple-quotes.conf",
+];
+
+const PORTED_REFERENCE_FIXTURES: &[&str] = &[
+    "equiv01/original.json",
+    "equiv02/original.json",
+    "equiv03/original.json",
+    "equiv04/original.json",
+    "equiv05/original.json",
+];
+
+const PORTED_INCLUDE_SUPPORT_FIXTURES: &[&str] = &[
+    "equiv03/letters/a.conf",
+    "equiv03/letters/b.json",
+    "equiv03/letters/c.conf",
+    "equiv03/letters/c.properties",
+    "equiv03/letters/numbers/1.conf",
+    "equiv03/letters/numbers/2.properties",
+    "equiv03/root/foo.conf",
+];
+
+fn fixture_file(case: &str, kind: &str) -> String {
+    format!("format/{case}/{kind}.conf")
+}
+
+fn lightbend_fixtures_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("lightbend-config")
+}
+
+fn lightbend_fixture_path(relative: &str) -> PathBuf {
+    lightbend_fixtures_root().join(relative)
+}
+
+fn read_lightbend_fixture(relative: &str) -> String {
+    fs::read_to_string(lightbend_fixture_path(relative))
+        .unwrap_or_else(|error| panic!("failed to read fixture {relative}: {error}"))
+}
+
+fn assert_formats(case: &str) {
+    let input = read_input_fixture(&fixture_file(case, "input"));
+    let expected = read_fixture(&fixture_file(case, "expected"));
+
+    assert_eq!(format_hocon(&input).unwrap(), expected);
+}
+
+fn assert_formats_with_options(case: &str, options: FormatOptions) {
+    let input = read_input_fixture(&fixture_file(case, "input"));
+    let expected = read_fixture(&fixture_file(case, "expected"));
+
+    assert_eq!(
+        format_hocon_with_options(&input, options).unwrap(),
+        expected
+    );
+}
+
+fn assert_format_idempotent(input: &str, context: &str) {
+    let formatted =
+        format_hocon(input).unwrap_or_else(|error| panic!("{context} should parse: {error}"));
+    let reformatted = format_hocon(&formatted)
+        .unwrap_or_else(|error| panic!("{context} should reparse after formatting: {error}"));
+    assert_eq!(
+        reformatted, formatted,
+        "{context} should be stable after formatting"
+    );
+}
+
+fn assert_fixture_set_exists(fixtures: &[&str]) {
+    for relative in fixtures {
+        assert!(
+            lightbend_fixture_path(relative).is_file(),
+            "missing ported upstream fixture {relative}"
+        );
+    }
+}
+
+#[test]
+fn formats_implicit_root_object_and_nested_values() {
+    assert_formats("default/implicit_root_object_and_nested_values");
+}
+
+#[test]
+fn preserves_literal_concatenation_spacing() {
+    assert_formats("default/preserves_literal_concatenation_spacing");
+}
+
+#[test]
+fn formats_includes_substitutions_and_append() {
+    assert_formats("default/includes_substitutions_and_append");
+}
+
+#[test]
+fn formats_object_and_array_concatenation() {
+    assert_formats("default/object_and_array_concatenation");
+}
+
+#[test]
+fn supports_concatenation_inside_arrays() {
+    assert_formats("default/concatenation_inside_arrays");
+}
+
+#[test]
+fn formats_path_segments_with_spaces_canonically() {
+    assert_formats("default/path_segments_with_spaces");
+}
+
+#[test]
+fn supports_environment_list_substitutions() {
+    assert_formats("default/environment_list_substitutions");
+}
+
+#[test]
+fn accepts_numbers_followed_by_unquoted_concatenation() {
+    assert_formats("default/numbers_followed_by_unquoted_concatenation");
+}
+
+#[test]
+fn preserves_explicit_root_object() {
+    assert_formats("default/explicit_root_object");
+}
+
+#[test]
+fn accepts_numeric_path_components() {
+    assert_formats("default/numeric_path_components");
+}
+
+#[test]
+fn formats_with_commas_between_elements() {
+    assert_formats_with_options(
+        "options/commas_between_elements",
+        FormatOptions {
+            comma_style: CommaStyle::Commas,
+        },
+    );
+}
+
+#[test]
+fn formats_with_trailing_commas() {
+    assert_formats_with_options(
+        "options/trailing_commas",
+        FormatOptions {
+            comma_style: CommaStyle::Trailing,
+        },
+    );
+}
+
+#[test]
+fn does_not_add_commas_to_implicit_root_entries() {
+    assert_formats_with_options(
+        "options/no_implicit_root_commas",
+        FormatOptions {
+            comma_style: CommaStyle::Trailing,
+        },
+    );
+}
+
+#[test]
+fn limits_root_separation_to_one_blank_line() {
+    assert_formats("default/root_separation");
+}
+
+#[test]
+fn preserves_root_level_comments() {
+    assert_formats("default/root_level_comments");
+}
+
+#[test]
+fn preserves_comments_inside_objects_and_arrays() {
+    assert_formats("default/comments_inside_objects_and_arrays");
+}
+
+#[test]
+fn preserves_inline_comments_on_same_line() {
+    assert_formats("default/inline_comments");
+}
+
+#[test]
+fn ported_lightbend_fixture_inventory_is_present() {
+    assert_eq!(PORTED_EQUIV_CASES.len(), 15);
+    assert_eq!(PORTED_REFERENCE_FIXTURES.len(), 5);
+    assert_eq!(PORTED_INCLUDE_SUPPORT_FIXTURES.len(), 7);
+
+    assert_fixture_set_exists(PORTED_EQUIV_CASES);
+    assert_fixture_set_exists(PORTED_REFERENCE_FIXTURES);
+    assert_fixture_set_exists(PORTED_INCLUDE_SUPPORT_FIXTURES);
+}
+
+#[test]
+fn ported_lightbend_equiv_cases_parse_and_format_stably() {
+    for relative in PORTED_EQUIV_CASES {
+        assert_format_idempotent(&read_lightbend_fixture(relative), relative);
+    }
+}
+
+#[test]
+fn ported_lightbend_reference_fixtures_parse_and_format_stably() {
+    for relative in PORTED_REFERENCE_FIXTURES {
+        assert_format_idempotent(&read_lightbend_fixture(relative), relative);
+    }
+}
+
+#[test]
+fn ported_lightbend_include_support_fixtures_parse_and_format_stably() {
+    for relative in PORTED_INCLUDE_SUPPORT_FIXTURES {
+        assert_format_idempotent(&read_lightbend_fixture(relative), relative);
+    }
+}
+
+#[test]
+fn ported_from_concatenation_test_string_concat_cannot_span_lines() {
+    let input = "a : ${x}\nfoo, x = 1";
+    assert!(format_hocon(&input).is_err());
+}
+
+#[test]
+fn ported_from_concatenation_test_list_concat_cannot_span_lines() {
+    let input = "a : [1,2]\n[3,4]";
+    assert!(format_hocon(&input).is_err());
+}
+
+#[test]
+fn ported_from_concatenation_test_object_concat_cannot_span_lines() {
+    let input = "a : { b : c }\n{ x : y }";
+    assert!(format_hocon(&input).is_err());
+}
+
+#[test]
+fn ported_from_concatenation_test_string_concat_inside_array_value() {
+    assert_formats("concatenation/string_concat_inside_array_value");
+}
+
+#[test]
+fn ported_from_concatenation_test_string_concats_are_keys() {
+    assert_formats("concatenation/string_concats_are_keys");
+}
+
+#[test]
+fn ported_from_concatenation_test_objects_are_not_keys() {
+    let input = "{ { a : 1 } : \"value\" }";
+    assert!(format_hocon(&input).is_err());
+}
+
+#[test]
+fn ported_from_concatenation_test_arrays_are_not_keys() {
+    let input = "{ [ \"a\" ] : \"value\" }";
+    assert!(format_hocon(&input).is_err());
+}
+
+#[test]
+fn ported_from_tokenizer_test_invalid_strings_are_rejected() {
+    for input in [
+        "\"\\q\"",
+        "\"\\u123\"",
+        "\"\\u12\"",
+        "\"\\u1\"",
+        "\"\\u\"",
+        "\"",
+        "\"abcdefg",
+        "$",
+        "${",
+    ] {
+        assert!(
+            format_hocon(input).is_err(),
+            "expected parse failure for {input:?}"
+        );
+    }
+}
