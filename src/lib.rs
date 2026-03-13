@@ -98,6 +98,7 @@ enum Entry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ArrayItem {
     Value {
+        leading_blank_line: bool,
         value: Value,
         trailing_comment: Option<TrailingComment>,
     },
@@ -282,9 +283,7 @@ fn format_object_multiline(object: &ObjectValue, indent: usize, options: FormatO
     let mut out = String::new();
     out.push_str("{\n");
     for (index, entry) in object.entries.iter().enumerate() {
-        if index > 0 {
-            out.push('\n');
-        }
+        push_multiline_entry_separator(&mut out, index, entry_has_leading_blank_line(entry));
         let entry_indent = indent + 2;
         let add_comma = should_add_comma_for_item(index, &value_indices, options.comma_style);
         out.push_str(&" ".repeat(entry_indent));
@@ -347,9 +346,7 @@ fn format_array_multiline(array: &ArrayValue, indent: usize, options: FormatOpti
     let mut out = String::new();
     out.push_str("[\n");
     for (index, item) in array.items.iter().enumerate() {
-        if index > 0 {
-            out.push('\n');
-        }
+        push_multiline_entry_separator(&mut out, index, array_item_has_leading_blank_line(item));
         let item_indent = indent + 2;
         let add_comma = should_add_comma_for_item(index, &value_indices, options.comma_style);
         out.push_str(&" ".repeat(item_indent));
@@ -388,6 +385,7 @@ fn format_array_item(
         ArrayItem::Value {
             value,
             trailing_comment,
+            ..
         } => {
             let mut out = format_value(value, indent, indent, options);
             push_trailing_comment(&mut out, trailing_comment.as_ref(), add_comma);
@@ -471,6 +469,7 @@ fn format_array_item_inline(item: &ArrayItem, options: FormatOptions) -> Option<
         ArrayItem::Value {
             value,
             trailing_comment,
+            ..
         } => {
             if trailing_comment.is_some() {
                 return None;
@@ -478,6 +477,25 @@ fn format_array_item_inline(item: &ArrayItem, options: FormatOptions) -> Option<
             format_value_inline(value, options)
         }
         ArrayItem::Comment(_) => None,
+    }
+}
+
+fn push_multiline_entry_separator(out: &mut String, index: usize, leading_blank_line: bool) {
+    if index > 0 {
+        if leading_blank_line {
+            out.push_str("\n\n");
+        } else {
+            out.push('\n');
+        }
+    }
+}
+
+fn array_item_has_leading_blank_line(item: &ArrayItem) -> bool {
+    match item {
+        ArrayItem::Value {
+            leading_blank_line, ..
+        } => *leading_blank_line,
+        ArrayItem::Comment(comment) => comment.leading_blank_line,
     }
 }
 
@@ -760,11 +778,8 @@ impl<'a> Parser<'a> {
             self.expect_char('{')?;
         }
         let content_start = self.pos;
-
-        self.skip_layout_without_comments();
-
         let mut entries = Vec::new();
-        let mut leading_blank_line = false;
+        let mut leading_blank_line = self.consume_layout_without_comments() > 1;
         loop {
             leading_blank_line =
                 self.collect_standalone_comments_into_entries(&mut entries, leading_blank_line);
@@ -814,18 +829,20 @@ impl<'a> Parser<'a> {
     fn parse_array_items(&mut self) -> Result<ArrayValue, ParseError> {
         self.expect_char('[')?;
         let content_start = self.pos;
-        self.skip_layout_without_comments();
-
         let mut items = Vec::new();
+        let mut leading_blank_line = self.consume_layout_without_comments() > 1;
         loop {
-            self.collect_standalone_comments_into_array_items(&mut items);
+            leading_blank_line =
+                self.collect_standalone_comments_into_array_items(&mut items, leading_blank_line);
 
             if self.peek_char() == Some(']') {
                 break;
             }
 
+            let value = self.parse_value()?;
             items.push(ArrayItem::Value {
-                value: self.parse_value()?,
+                leading_blank_line,
+                value,
                 trailing_comment: None,
             });
             if let Some(comment) = self.consume_inline_comment_suffix() {
@@ -836,11 +853,12 @@ impl<'a> Parser<'a> {
                 break;
             }
 
-            let had_separator = self.consume_body_separator_into_array_items(&mut items)?;
+            let separator = self.consume_body_separator_into_array_items(&mut items)?;
+            leading_blank_line = separator.leading_blank_line;
             if self.peek_char() == Some(']') {
                 break;
             }
-            if !had_separator {
+            if !separator.had_separator {
                 return Err(self.error("expected a comma or newline between array elements"));
             }
         }
@@ -1414,6 +1432,7 @@ impl<'a> Parser<'a> {
                     return Err(self.error("unexpected comma between object entries"));
                 }
                 self.pos += 1;
+                newline_count = 0;
                 state = SeparatorState::SawComma;
                 continue;
             }
@@ -1461,7 +1480,7 @@ impl<'a> Parser<'a> {
     fn consume_body_separator_into_array_items(
         &mut self,
         items: &mut Vec<ArrayItem>,
-    ) -> Result<bool, ParseError> {
+    ) -> Result<EntrySeparator, ParseError> {
         let mut state = SeparatorState::Start;
         let mut newline_count = 0;
 
@@ -1476,6 +1495,7 @@ impl<'a> Parser<'a> {
                     return Err(self.error("unexpected comma between array elements"));
                 }
                 self.pos += 1;
+                newline_count = 0;
                 state = SeparatorState::SawComma;
                 continue;
             }
@@ -1514,7 +1534,10 @@ impl<'a> Parser<'a> {
             break;
         }
 
-        Ok(state != SeparatorState::Start)
+        Ok(EntrySeparator {
+            had_separator: state != SeparatorState::Start,
+            leading_blank_line: newline_count > 1,
+        })
     }
 
     fn collect_standalone_comments_into_entries(
@@ -1535,16 +1558,21 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn collect_standalone_comments_into_array_items(&mut self, items: &mut Vec<ArrayItem>) {
+    fn collect_standalone_comments_into_array_items(
+        &mut self,
+        items: &mut Vec<ArrayItem>,
+        mut leading_blank_line: bool,
+    ) -> bool {
         loop {
-            let leading_blank_line = self.consume_layout_without_comments() > 1;
+            leading_blank_line |= self.consume_layout_without_comments() > 1;
             if !self.starts_comment() {
-                break;
+                return leading_blank_line;
             }
             items.push(ArrayItem::Comment(StandaloneComment {
                 text: self.consume_comment_text(),
                 leading_blank_line,
             }));
+            leading_blank_line = false;
         }
     }
 

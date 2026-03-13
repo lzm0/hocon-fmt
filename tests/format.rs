@@ -181,6 +181,11 @@ fn preserves_comments_inside_objects_and_arrays() {
 }
 
 #[test]
+fn preserves_blank_lines_inside_objects_and_arrays() {
+    assert_formats("blank_lines_inside_collections");
+}
+
+#[test]
 fn preserves_inline_comments_on_same_line() {
     assert_formats("inline_comments");
 }
