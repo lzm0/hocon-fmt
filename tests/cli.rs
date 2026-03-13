@@ -218,7 +218,7 @@ fn formats_inline_collections_by_default_when_they_fit() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "a = { b = 1, c = [ 2, 3 ] }\n"
+        "a = { b = 1, c = [2, 3] }\n"
     );
     assert!(String::from_utf8(output.stderr).unwrap().is_empty());
 }

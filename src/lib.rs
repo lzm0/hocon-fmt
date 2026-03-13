@@ -368,7 +368,7 @@ fn format_array_inline(array: &ArrayValue, options: FormatOptions) -> Option<Str
     if parts.is_empty() {
         Some("[]".to_string())
     } else {
-        Some(format!("[ {} ]", parts.join(", ")))
+        Some(format!("[{}]", parts.join(", ")))
     }
 }
 

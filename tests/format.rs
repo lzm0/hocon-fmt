@@ -377,7 +377,7 @@ fn formats_include_and_path_edge_cases_canonically() {
 
 #[test]
 fn keeps_single_line_collections_when_they_fit() {
-    assert_formats_to("a:{b=1,c:[2,3]}", "a = { b = 1, c = [ 2, 3 ] }\n");
+    assert_formats_to("a:{b=1,c:[2,3]}", "a = { b = 1, c = [2, 3] }\n");
 }
 
 #[test]
