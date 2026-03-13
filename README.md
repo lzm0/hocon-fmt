@@ -54,6 +54,12 @@ hocon-fmt application.conf
 hocon-fmt --write application.conf
 ```
 
+### Format all `.conf` files in the current working directory
+
+```bash
+find . -type f -name '*.conf' -exec hocon-fmt --write {} +
+```
+
 ### Check formatting without modifying files
 
 ```bash
