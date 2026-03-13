@@ -42,9 +42,19 @@ impl Display for ParseError {
 
 impl Error for ParseError {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FormatOptions {
     pub comma_style: CommaStyle,
+    pub max_width: usize,
+}
+
+impl Default for FormatOptions {
+    fn default() -> Self {
+        Self {
+            comma_style: CommaStyle::None,
+            max_width: 80,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -61,9 +71,21 @@ struct Document {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct ObjectValue {
+    entries: Vec<Entry>,
+    prefer_multiline: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ArrayValue {
+    items: Vec<ArrayItem>,
+    prefer_multiline: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Root {
-    Object { entries: Vec<Entry>, braced: bool },
-    Array(Vec<ArrayItem>),
+    Object { object: ObjectValue, braced: bool },
+    Array(ArrayValue),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,8 +147,8 @@ struct ConcatItem {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ValuePart {
-    Object(Vec<Entry>),
-    Array(Vec<ArrayItem>),
+    Object(ObjectValue),
+    Array(ArrayValue),
     Atom(Atom),
 }
 
@@ -152,6 +174,13 @@ struct Substitution {
     list_hint: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConcatKind {
+    Simple,
+    Array,
+    Object,
+}
+
 pub fn format_hocon(input: &str) -> Result<String, ParseError> {
     format_hocon_with_options(input, FormatOptions::default())
 }
@@ -168,16 +197,16 @@ pub fn format_hocon_with_options(
 impl Document {
     fn format(&self, options: FormatOptions) -> String {
         match &self.root {
-            Root::Object { entries, braced } => {
+            Root::Object { object, braced } => {
                 if *braced {
-                    format!("{}\n", format_object(entries, 0, options))
-                } else if entries.is_empty() {
+                    format!("{}\n", format_object(object, 0, 0, options))
+                } else if object.entries.is_empty() {
                     String::new()
                 } else {
-                    format_root_entries(entries, options)
+                    format_root_entries(&object.entries, options)
                 }
             }
-            Root::Array(items) => format!("{}\n", format_array(items, 0, options)),
+            Root::Array(array) => format!("{}\n", format_array(array, 0, 0, options)),
         }
     }
 }
@@ -200,12 +229,28 @@ fn format_root_entries(entries: &[Entry], options: FormatOptions) -> String {
     out
 }
 
-fn format_object(entries: &[Entry], indent: usize, options: FormatOptions) -> String {
-    if entries.is_empty() {
-        return "{}".to_string();
+fn format_object(
+    object: &ObjectValue,
+    indent: usize,
+    current_column: usize,
+    options: FormatOptions,
+) -> String {
+    if let Some(inline) = format_object_inline(object, options) {
+        if current_column + text_width(&inline) <= options.max_width {
+            return inline;
+        }
     }
 
-    let value_indices: Vec<usize> = entries
+    format_object_multiline(object, indent, options)
+}
+
+fn format_object_multiline(object: &ObjectValue, indent: usize, options: FormatOptions) -> String {
+    if object.entries.is_empty() {
+        return format!("{{\n{}}}", " ".repeat(indent));
+    }
+
+    let value_indices: Vec<usize> = object
+        .entries
         .iter()
         .enumerate()
         .filter_map(|(idx, entry)| (!matches!(entry, Entry::Comment(_))).then_some(idx))
@@ -213,12 +258,13 @@ fn format_object(entries: &[Entry], indent: usize, options: FormatOptions) -> St
 
     let mut out = String::new();
     out.push_str("{\n");
-    for (index, entry) in entries.iter().enumerate() {
+    for (index, entry) in object.entries.iter().enumerate() {
         if index > 0 {
             out.push('\n');
         }
-        out.push_str(&" ".repeat(indent + 2));
-        out.push_str(&format_entry(entry, indent + 2, options));
+        let entry_indent = indent + 2;
+        out.push_str(&" ".repeat(entry_indent));
+        out.push_str(&format_entry(entry, entry_indent, options));
         if should_add_comma_for_item(index, &value_indices, options.comma_style) {
             out.push(',');
         }
@@ -229,12 +275,45 @@ fn format_object(entries: &[Entry], indent: usize, options: FormatOptions) -> St
     out
 }
 
-fn format_array(items: &[ArrayItem], indent: usize, options: FormatOptions) -> String {
-    if items.is_empty() {
-        return "[]".to_string();
+fn format_object_inline(object: &ObjectValue, options: FormatOptions) -> Option<String> {
+    if object.prefer_multiline {
+        return None;
     }
 
-    let value_indices: Vec<usize> = items
+    let mut parts = Vec::new();
+    for entry in &object.entries {
+        parts.push(format_entry_inline(entry, options)?);
+    }
+
+    if parts.is_empty() {
+        Some("{}".to_string())
+    } else {
+        Some(format!("{{ {} }}", parts.join(", ")))
+    }
+}
+
+fn format_array(
+    array: &ArrayValue,
+    indent: usize,
+    current_column: usize,
+    options: FormatOptions,
+) -> String {
+    if let Some(inline) = format_array_inline(array, options) {
+        if current_column + text_width(&inline) <= options.max_width {
+            return inline;
+        }
+    }
+
+    format_array_multiline(array, indent, options)
+}
+
+fn format_array_multiline(array: &ArrayValue, indent: usize, options: FormatOptions) -> String {
+    if array.items.is_empty() {
+        return format!("[\n{}]", " ".repeat(indent));
+    }
+
+    let value_indices: Vec<usize> = array
+        .items
         .iter()
         .enumerate()
         .filter_map(|(idx, item)| matches!(item, ArrayItem::Value { .. }).then_some(idx))
@@ -242,17 +321,18 @@ fn format_array(items: &[ArrayItem], indent: usize, options: FormatOptions) -> S
 
     let mut out = String::new();
     out.push_str("[\n");
-    for (index, item) in items.iter().enumerate() {
+    for (index, item) in array.items.iter().enumerate() {
         if index > 0 {
             out.push('\n');
         }
-        out.push_str(&" ".repeat(indent + 2));
+        let item_indent = indent + 2;
+        out.push_str(&" ".repeat(item_indent));
         match item {
             ArrayItem::Value {
                 value,
                 trailing_comment,
             } => {
-                out.push_str(&format_value(value, indent + 2, options));
+                out.push_str(&format_value(value, item_indent, item_indent, options));
                 if let Some(comment) = trailing_comment {
                     out.push_str(comment);
                 }
@@ -269,6 +349,23 @@ fn format_array(items: &[ArrayItem], indent: usize, options: FormatOptions) -> S
     out
 }
 
+fn format_array_inline(array: &ArrayValue, options: FormatOptions) -> Option<String> {
+    if array.prefer_multiline {
+        return None;
+    }
+
+    let mut parts = Vec::new();
+    for item in &array.items {
+        parts.push(format_array_item_inline(item, options)?);
+    }
+
+    if parts.is_empty() {
+        Some("[]".to_string())
+    } else {
+        Some(format!("[ {} ]", parts.join(", ")))
+    }
+}
+
 fn format_entry(entry: &Entry, indent: usize, options: FormatOptions) -> String {
     match entry {
         Entry::Field(field) => {
@@ -276,12 +373,14 @@ fn format_entry(entry: &Entry, indent: usize, options: FormatOptions) -> String 
                 FieldOp::Set => "=",
                 FieldOp::Append => "+=",
             };
-            let mut out = format!(
-                "{} {} {}",
-                format_path(&field.path, true),
-                operator,
-                format_value(&field.value, indent, options)
-            );
+            let prefix = format!("{} {} ", format_path(&field.path, true), operator);
+            let mut out = prefix.clone();
+            out.push_str(&format_value(
+                &field.value,
+                indent,
+                indent + text_width(&prefix),
+                options,
+            ));
             if let Some(comment) = &field.trailing_comment {
                 out.push_str(comment);
             }
@@ -295,6 +394,46 @@ fn format_entry(entry: &Entry, indent: usize, options: FormatOptions) -> String 
             out
         }
         Entry::Comment(comment) => comment.clone(),
+    }
+}
+
+fn format_entry_inline(entry: &Entry, options: FormatOptions) -> Option<String> {
+    match entry {
+        Entry::Field(field) => {
+            if field.trailing_comment.is_some() {
+                return None;
+            }
+
+            let operator = match field.op {
+                FieldOp::Set => "=",
+                FieldOp::Append => "+=",
+            };
+            let mut out = format!("{} {} ", format_path(&field.path, true), operator);
+            out.push_str(&format_value_inline(&field.value, options)?);
+            Some(out)
+        }
+        Entry::Include(include) => {
+            if include.trailing_comment.is_some() {
+                return None;
+            }
+            Some(format_include(&include.include))
+        }
+        Entry::Comment(_) => None,
+    }
+}
+
+fn format_array_item_inline(item: &ArrayItem, options: FormatOptions) -> Option<String> {
+    match item {
+        ArrayItem::Value {
+            value,
+            trailing_comment,
+        } => {
+            if trailing_comment.is_some() {
+                return None;
+            }
+            format_value_inline(value, options)
+        }
+        ArrayItem::Comment(_) => None,
     }
 }
 
@@ -330,26 +469,76 @@ fn format_include(include: &Include) -> String {
     }
 }
 
-fn format_value(value: &Value, indent: usize, options: FormatOptions) -> String {
+fn format_value(
+    value: &Value,
+    indent: usize,
+    current_column: usize,
+    options: FormatOptions,
+) -> String {
     match value {
-        Value::Single(part) => format_value_part(part, indent, options),
+        Value::Single(part) => format_value_part(part, indent, current_column, options),
         Value::Concat(items) => {
+            if let Some(inline) = format_value_inline(value, options) {
+                if current_column + text_width(&inline) <= options.max_width {
+                    return inline;
+                }
+            }
+
             let mut out = String::new();
             for item in items {
                 out.push_str(&item.separator);
-                out.push_str(&format_value_part(&item.part, indent, options));
+                let part_column = current_column_after(current_column, &out);
+                out.push_str(&format_value_part(&item.part, indent, part_column, options));
             }
             out
         }
     }
 }
 
-fn format_value_part(part: &ValuePart, indent: usize, options: FormatOptions) -> String {
+fn format_value_inline(value: &Value, options: FormatOptions) -> Option<String> {
+    match value {
+        Value::Single(part) => format_value_part_inline(part, options),
+        Value::Concat(items) => {
+            let mut out = String::new();
+            for item in items {
+                out.push_str(&item.separator);
+                out.push_str(&format_value_part_inline(&item.part, options)?);
+            }
+            Some(out)
+        }
+    }
+}
+
+fn format_value_part(
+    part: &ValuePart,
+    indent: usize,
+    current_column: usize,
+    options: FormatOptions,
+) -> String {
     match part {
-        ValuePart::Object(entries) => format_object(entries, indent, options),
-        ValuePart::Array(items) => format_array(items, indent, options),
+        ValuePart::Object(object) => format_object(object, indent, current_column, options),
+        ValuePart::Array(array) => format_array(array, indent, current_column, options),
         ValuePart::Atom(atom) => format_atom(atom),
     }
+}
+
+fn format_value_part_inline(part: &ValuePart, options: FormatOptions) -> Option<String> {
+    match part {
+        ValuePart::Object(object) => format_object_inline(object, options),
+        ValuePart::Array(array) => format_array_inline(array, options),
+        ValuePart::Atom(atom) => Some(format_atom(atom)),
+    }
+}
+
+fn current_column_after(start_column: usize, text: &str) -> usize {
+    match text.rsplit_once('\n') {
+        Some((_, tail)) => text_width(tail),
+        None => start_column + text_width(text),
+    }
+}
+
+fn text_width(text: &str) -> usize {
+    text.chars().count()
 }
 
 fn format_atom(atom: &Atom) -> String {
@@ -447,6 +636,15 @@ fn quote_string(value: &str) -> String {
     out
 }
 
+fn classify_value_part_for_concat(part: &ValuePart) -> Option<ConcatKind> {
+    match part {
+        ValuePart::Object(_) => Some(ConcatKind::Object),
+        ValuePart::Array(_) => Some(ConcatKind::Array),
+        ValuePart::Atom(Atom::Substitution(_)) => None,
+        ValuePart::Atom(_) => Some(ConcatKind::Simple),
+    }
+}
+
 struct Parser<'a> {
     input: &'a str,
     pos: usize,
@@ -456,6 +654,13 @@ struct Parser<'a> {
 enum PathMode {
     FieldKey,
     Substitution,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SeparatorState {
+    Start,
+    SawComma,
+    SawNewline,
 }
 
 impl<'a> Parser<'a> {
@@ -468,22 +673,39 @@ impl<'a> Parser<'a> {
 
         let root = match self.peek_char() {
             Some('{') => {
-                let entries = self.parse_object_entries(Some('}'))?;
+                let object = self.parse_object_entries(Some('}'))?;
                 Root::Object {
-                    entries,
+                    object,
                     braced: true,
                 }
             }
             Some('[') => Root::Array(self.parse_array_items()?),
             Some(_) => Root::Object {
-                entries: self.parse_object_entries(None)?,
+                object: self.parse_object_entries(None)?,
                 braced: false,
             },
             None => Root::Object {
-                entries: Vec::new(),
+                object: ObjectValue {
+                    entries: Vec::new(),
+                    prefer_multiline: false,
+                },
                 braced: false,
             },
         };
+
+        let has_implicit_root_value = match &root {
+            Root::Object {
+                object,
+                braced: false,
+            } => object
+                .entries
+                .iter()
+                .any(|entry| !matches!(entry, Entry::Comment(_))),
+            _ => true,
+        };
+        if !has_implicit_root_value {
+            return Err(self.error("empty documents are not valid"));
+        }
 
         self.skip_layout_without_comments();
         if !self.is_eof() {
@@ -493,10 +715,14 @@ impl<'a> Parser<'a> {
         Ok(Document { root })
     }
 
-    fn parse_object_entries(&mut self, terminator: Option<char>) -> Result<Vec<Entry>, ParseError> {
+    fn parse_object_entries(
+        &mut self,
+        terminator: Option<char>,
+    ) -> Result<ObjectValue, ParseError> {
         if terminator == Some('}') {
             self.expect_char('{')?;
         }
+        let content_start = self.pos;
 
         self.skip_layout_without_comments();
 
@@ -517,7 +743,7 @@ impl<'a> Parser<'a> {
                 break;
             }
 
-            let had_separator = self.consume_body_separator_into_entries(&mut entries);
+            let had_separator = self.consume_body_separator_into_entries(&mut entries)?;
             if self.is_object_end(terminator) {
                 break;
             }
@@ -530,11 +756,15 @@ impl<'a> Parser<'a> {
             self.expect_char('}')?;
         }
 
-        Ok(entries)
+        Ok(ObjectValue {
+            entries,
+            prefer_multiline: self.input[content_start..self.pos].contains('\n'),
+        })
     }
 
-    fn parse_array_items(&mut self) -> Result<Vec<ArrayItem>, ParseError> {
+    fn parse_array_items(&mut self) -> Result<ArrayValue, ParseError> {
         self.expect_char('[')?;
+        let content_start = self.pos;
         self.skip_layout_without_comments();
 
         let mut items = Vec::new();
@@ -557,7 +787,7 @@ impl<'a> Parser<'a> {
                 break;
             }
 
-            let had_separator = self.consume_body_separator_into_array_items(&mut items);
+            let had_separator = self.consume_body_separator_into_array_items(&mut items)?;
             if self.peek_char() == Some(']') {
                 break;
             }
@@ -567,7 +797,10 @@ impl<'a> Parser<'a> {
         }
 
         self.expect_char(']')?;
-        Ok(items)
+        Ok(ArrayValue {
+            items,
+            prefer_multiline: self.input[content_start..self.pos].contains('\n'),
+        })
     }
 
     fn parse_entry(&mut self) -> Result<Entry, ParseError> {
@@ -698,6 +931,21 @@ impl<'a> Parser<'a> {
         if items.len() == 1 {
             Ok(Value::Single(items.pop().unwrap().part))
         } else {
+            let mut concat_kind = None;
+            for item in &items {
+                let Some(kind) = classify_value_part_for_concat(&item.part) else {
+                    continue;
+                };
+
+                match concat_kind {
+                    Some(existing) if existing != kind => {
+                        return Err(self.error("invalid mixed-type value concatenation"));
+                    }
+                    Some(_) => {}
+                    None => concat_kind = Some(kind),
+                }
+            }
+
             Ok(Value::Concat(items))
         }
     }
@@ -961,7 +1209,9 @@ impl<'a> Parser<'a> {
                         _ => return Err(self.error("invalid escape sequence in quoted string")),
                     }
                 }
-                '\n' => return Err(self.error("quoted strings cannot contain newlines")),
+                ch if ch.is_control() => {
+                    return Err(self.error("quoted strings cannot contain control characters"));
+                }
                 _ => self.pos += ch.len_utf8(),
             }
         }
@@ -1097,64 +1347,78 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn consume_body_separator_into_entries(&mut self, entries: &mut Vec<Entry>) -> bool {
-        let mut saw_separator = false;
+    fn consume_body_separator_into_entries(
+        &mut self,
+        entries: &mut Vec<Entry>,
+    ) -> Result<bool, ParseError> {
+        let mut state = SeparatorState::Start;
 
         loop {
             let _ = self.consume_inline_whitespace();
 
             if self.peek_char() == Some(',') {
+                if state != SeparatorState::Start {
+                    return Err(self.error("unexpected comma between object entries"));
+                }
                 self.pos += 1;
-                saw_separator = true;
+                state = SeparatorState::SawComma;
                 continue;
             }
 
             if self.starts_comment() {
                 entries.push(Entry::Comment(self.consume_comment_text()));
-                saw_separator = true;
                 continue;
             }
 
             if self.peek_char() == Some('\n') {
                 self.pos += 1;
-                saw_separator = true;
+                if state == SeparatorState::Start {
+                    state = SeparatorState::SawNewline;
+                }
                 continue;
             }
 
             break;
         }
 
-        saw_separator
+        Ok(state != SeparatorState::Start)
     }
 
-    fn consume_body_separator_into_array_items(&mut self, items: &mut Vec<ArrayItem>) -> bool {
-        let mut saw_separator = false;
+    fn consume_body_separator_into_array_items(
+        &mut self,
+        items: &mut Vec<ArrayItem>,
+    ) -> Result<bool, ParseError> {
+        let mut state = SeparatorState::Start;
 
         loop {
             let _ = self.consume_inline_whitespace();
 
             if self.peek_char() == Some(',') {
+                if state != SeparatorState::Start {
+                    return Err(self.error("unexpected comma between array elements"));
+                }
                 self.pos += 1;
-                saw_separator = true;
+                state = SeparatorState::SawComma;
                 continue;
             }
 
             if self.starts_comment() {
                 items.push(ArrayItem::Comment(self.consume_comment_text()));
-                saw_separator = true;
                 continue;
             }
 
             if self.peek_char() == Some('\n') {
                 self.pos += 1;
-                saw_separator = true;
+                if state == SeparatorState::Start {
+                    state = SeparatorState::SawNewline;
+                }
                 continue;
             }
 
             break;
         }
 
-        saw_separator
+        Ok(state != SeparatorState::Start)
     }
 
     fn collect_standalone_comments_into_entries(&mut self, entries: &mut Vec<Entry>) {

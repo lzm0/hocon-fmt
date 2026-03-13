@@ -11,6 +11,7 @@ This project parses and formats [HOCON](https://github.com/lightbend/config/blob
 - Supports CI-style verification with `--check`
 - Supports writing to a separate output file with `--output`
 - Supports configurable comma style with `--commas none|commas|trailing`
+- Supports width-aware single-line collections with `--max-width`
 - Includes ported upstream fixture tests from `lightbend/config`
 
 ## Build
@@ -86,6 +87,21 @@ hocon-fmt --commas commas application.conf
 hocon-fmt --commas trailing application.conf
 ```
 
+### Max width
+
+The formatter keeps arrays and braced objects on one line when they fit within
+`--max-width` columns. The default width is `80`.
+
+Arrays and braced objects that are already written across multiple lines stay
+multiline.
+
+Examples:
+
+```bash
+hocon-fmt --max-width 80 application.conf
+hocon-fmt --max-width 40 application.conf
+```
+
 ## Library Usage
 
 ```rust
@@ -97,6 +113,7 @@ let formatted_with_commas = format_hocon_with_options(
     "a:{b=1,c:[2,3]}",
     FormatOptions {
         comma_style: CommaStyle::Commas,
+        max_width: 40,
     },
 )?;
 ```
@@ -117,8 +134,8 @@ The test suite includes:
 
 ## Current Limitations
 
-- Comments are accepted during parsing but are not preserved in formatted output
-- The formatter normalizes output into a canonical style rather than preserving original whitespace
+- The formatter normalizes output into a canonical style rather than preserving
+  original whitespace
 
 ## Upstream Test Fixtures
 

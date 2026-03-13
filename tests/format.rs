@@ -79,6 +79,10 @@ fn assert_formats_with_options(case: &str, options: FormatOptions) {
     );
 }
 
+fn assert_formats_to(input: &str, expected: &str) {
+    assert_eq!(format_hocon(input).unwrap(), expected);
+}
+
 fn assert_format_idempotent(input: &str, context: &str) {
     let formatted =
         format_hocon(input).unwrap_or_else(|error| panic!("{context} should parse: {error}"));
@@ -155,6 +159,8 @@ fn formats_with_commas_between_elements() {
         "options/commas_between_elements",
         FormatOptions {
             comma_style: CommaStyle::Commas,
+            max_width: 1,
+            ..FormatOptions::default()
         },
     );
 }
@@ -165,6 +171,8 @@ fn formats_with_trailing_commas() {
         "options/trailing_commas",
         FormatOptions {
             comma_style: CommaStyle::Trailing,
+            max_width: 1,
+            ..FormatOptions::default()
         },
     );
 }
@@ -175,6 +183,8 @@ fn does_not_add_commas_to_implicit_root_entries() {
         "options/no_implicit_root_commas",
         FormatOptions {
             comma_style: CommaStyle::Trailing,
+            max_width: 1,
+            ..FormatOptions::default()
         },
     );
 }
@@ -284,6 +294,109 @@ fn ported_from_tokenizer_test_invalid_strings_are_rejected() {
         "$",
         "${",
     ] {
+        assert!(
+            format_hocon(input).is_err(),
+            "expected parse failure for {input:?}"
+        );
+    }
+}
+
+#[test]
+fn rejects_empty_implicit_root_documents() {
+    for input in [
+        "",
+        " \n\t\u{feff}\n",
+        "# comment only\n",
+        "// comment only\n",
+    ] {
+        assert!(
+            format_hocon(input).is_err(),
+            "expected parse failure for {input:?}"
+        );
+    }
+}
+
+#[test]
+fn rejects_repeated_or_misplaced_commas() {
+    for input in [
+        "[1,2,3,,]",
+        "[,1,2,3]",
+        "[1,,2,3]",
+        "[1\n,2]",
+        "{ a : 1,, }",
+        "{ , a : 1 }",
+        "{ a : 1\n, b : 2 }",
+    ] {
+        assert!(
+            format_hocon(input).is_err(),
+            "expected parse failure for {input:?}"
+        );
+    }
+}
+
+#[test]
+fn rejects_mixed_type_value_concatenation() {
+    for input in [
+        "a = { b : 1 } 2",
+        "a = [1] 2",
+        "a = [1] { b : 2 }",
+        "a = { b : 1 } [2]",
+    ] {
+        assert!(
+            format_hocon(input).is_err(),
+            "expected parse failure for {input:?}"
+        );
+    }
+}
+
+#[test]
+fn rejects_raw_control_characters_in_quoted_strings() {
+    for input in ["a = \"\t\"\n", "a = \"\r\"\n", "a = \"\u{1}\"\n"] {
+        assert!(
+            format_hocon(input).is_err(),
+            "expected parse failure for {input:?}"
+        );
+    }
+}
+
+#[test]
+fn formats_include_and_path_edge_cases_canonically() {
+    assert_formats_to("{ foo include : 42 }", "{ \"foo include\" = 42 }\n");
+    assert_formats_to("{ \"include\" : 42 }", "{ \"include\" = 42 }\n");
+    assert_formats_to(
+        "include\n required ( file ( \"x.conf\" ) )",
+        "include required(file(\"x.conf\"))\n",
+    );
+    assert_formats_to("a.\"\".b = 1", "a.\"\".b = 1\n");
+}
+
+#[test]
+fn keeps_single_line_collections_when_they_fit() {
+    assert_formats_to("a:{b=1,c:[2,3]}", "a = { b = 1, c = [ 2, 3 ] }\n");
+}
+
+#[test]
+fn breaks_collections_when_they_exceed_max_width() {
+    let output = format_hocon_with_options(
+        "a:{b=1,c:[2,3]}",
+        FormatOptions {
+            max_width: 10,
+            ..FormatOptions::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(output, "a = {\n  b = 1\n  c = [\n    2\n    3\n  ]\n}\n");
+}
+
+#[test]
+fn preserves_multiline_arrays_even_when_they_would_fit() {
+    assert_formats_to("a = [\n  1, 2\n]\n", "a = [\n  1\n  2\n]\n");
+}
+
+#[test]
+fn rejects_empty_path_elements() {
+    for input in ["a..b = 1", ".a = 1", "a. = 1", "a = ${foo..bar}"] {
         assert!(
             format_hocon(input).is_err(),
             "expected parse failure for {input:?}"

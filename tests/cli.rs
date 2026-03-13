@@ -61,30 +61,21 @@ fn unique_temp_dir() -> PathBuf {
 
 #[test]
 fn formats_stdin_to_stdout_when_no_file_is_given() {
-    let input = read_input_fixture(&fixture_file(
-        "formats_stdin_to_stdout_when_no_file_is_given",
-        "input",
-    ));
+    let input = read_input_fixture(&fixture_file("single_field_object", "input"));
     let output = run_cli(&[], Some(&input));
 
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        read_fixture(&fixture_file(
-            "formats_stdin_to_stdout_when_no_file_is_given",
-            "expected",
-        ))
+        read_fixture(&fixture_file("single_field_object", "expected"))
     );
     assert!(String::from_utf8(output.stderr).unwrap().is_empty());
 }
 
 #[test]
 fn formats_with_no_commas_when_requested() {
-    let input = read_input_fixture(&fixture_file(
-        "formats_with_no_commas_when_requested",
-        "input",
-    ));
-    let output = run_cli(&["--commas", "none"], Some(&input));
+    let input = read_input_fixture(&fixture_file("compact_nested_object", "input"));
+    let output = run_cli(&["--commas", "none", "--max-width", "1"], Some(&input));
 
     assert!(output.status.success());
     assert_eq!(
@@ -99,11 +90,8 @@ fn formats_with_no_commas_when_requested() {
 
 #[test]
 fn formats_with_standard_commas_when_requested() {
-    let input = read_input_fixture(&fixture_file(
-        "formats_with_standard_commas_when_requested",
-        "input",
-    ));
-    let output = run_cli(&["--commas", "commas"], Some(&input));
+    let input = read_input_fixture(&fixture_file("compact_nested_object", "input"));
+    let output = run_cli(&["--commas", "commas", "--max-width", "1"], Some(&input));
 
     assert!(output.status.success());
     assert_eq!(
@@ -122,7 +110,7 @@ fn formats_with_trailing_commas_when_requested() {
         "formats_with_trailing_commas_when_requested",
         "input",
     ));
-    let output = run_cli(&["--commas", "trailing"], Some(&input));
+    let output = run_cli(&["--commas", "trailing", "--max-width", "1"], Some(&input));
 
     assert!(output.status.success());
     assert_eq!(
@@ -158,7 +146,7 @@ fn write_mode_formats_files_in_place() {
     let file = dir.join("input.conf");
     fs::write(
         &file,
-        read_input_fixture(&fixture_file("write_mode_formats_files_in_place", "input")),
+        read_input_fixture(&fixture_file("single_field_object", "input")),
     )
     .unwrap();
 
@@ -167,10 +155,7 @@ fn write_mode_formats_files_in_place() {
     assert!(output.status.success());
     assert_eq!(
         fs::read_to_string(&file).unwrap(),
-        read_fixture(&fixture_file(
-            "write_mode_formats_files_in_place",
-            "expected"
-        ))
+        read_fixture(&fixture_file("single_field_object", "expected"))
     );
     assert!(
         String::from_utf8(output.stderr)
@@ -186,10 +171,7 @@ fn output_mode_writes_to_a_different_file() {
     let dir = unique_temp_dir();
     let input = dir.join("input.conf");
     let output_path = dir.join("output.conf");
-    let original = read_input_fixture(&fixture_file(
-        "output_mode_writes_to_a_different_file",
-        "input",
-    ));
+    let original = read_input_fixture(&fixture_file("single_field_object", "input"));
     fs::write(&input, &original).unwrap();
 
     let output = run_cli(
@@ -205,10 +187,7 @@ fn output_mode_writes_to_a_different_file() {
     assert!(String::from_utf8(output.stdout).unwrap().is_empty());
     assert_eq!(
         fs::read_to_string(&output_path).unwrap(),
-        read_fixture(&fixture_file(
-            "output_mode_writes_to_a_different_file",
-            "expected"
-        ))
+        read_fixture(&fixture_file("single_field_object", "expected"))
     );
     assert_eq!(fs::read_to_string(&input).unwrap(), original);
 
@@ -230,4 +209,37 @@ fn multiple_inputs_require_a_multi_file_mode() {
     assert!(stderr.contains("multiple input files require --check or --write"));
 
     fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn formats_inline_collections_by_default_when_they_fit() {
+    let output = run_cli(&["--max-width", "80"], Some("a:{b=1,c:[2,3]}"));
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "a = { b = 1, c = [ 2, 3 ] }\n"
+    );
+    assert!(String::from_utf8(output.stderr).unwrap().is_empty());
+}
+
+#[test]
+fn formats_multiline_when_max_width_is_narrow() {
+    let output = run_cli(&["--max-width", "10"], Some("a:{b=1,c:[2,3]}"));
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "a = {\n  b = 1\n  c = [\n    2\n    3\n  ]\n}\n"
+    );
+    assert!(String::from_utf8(output.stderr).unwrap().is_empty());
+}
+
+#[test]
+fn rejects_zero_max_width() {
+    let output = run_cli(&["--max-width", "0"], Some("a:{b=1}"));
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--max-width must be greater than zero"));
 }

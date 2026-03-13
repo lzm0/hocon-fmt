@@ -45,6 +45,14 @@ struct Cli {
         help = "Comma policy for objects and arrays."
     )]
     comma_style: CliCommaStyle,
+
+    #[arg(
+        long = "max-width",
+        default_value_t = 80,
+        value_name = "COLUMNS",
+        help = "Maximum width for keeping collections on one line."
+    )]
+    max_width: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +135,9 @@ fn validate_cli(cli: &Cli) -> Result<(), String> {
     if !cli.write && !cli.check && cli.output.is_none() && inputs.len() > 1 {
         return Err("multiple input files require --check or --write".to_string());
     }
+    if cli.max_width == 0 {
+        return Err("--max-width must be greater than zero".to_string());
+    }
 
     Ok(())
 }
@@ -134,6 +145,7 @@ fn validate_cli(cli: &Cli) -> Result<(), String> {
 fn run(cli: Cli) -> Result<RunOutcome, String> {
     let options = FormatOptions {
         comma_style: cli.comma_style.into(),
+        max_width: cli.max_width,
     };
     let inputs = resolve_inputs(&cli.inputs);
 
