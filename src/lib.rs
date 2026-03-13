@@ -99,15 +99,20 @@ enum Entry {
 enum ArrayItem {
     Value {
         value: Value,
-        trailing_comment: Option<String>,
+        trailing_comment: Option<TrailingComment>,
     },
     Comment(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct TrailingComment {
+    text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct IncludeStmt {
     include: Include,
-    trailing_comment: Option<String>,
+    trailing_comment: Option<TrailingComment>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,7 +120,7 @@ struct Field {
     path: Vec<String>,
     op: FieldOp,
     value: Value,
-    trailing_comment: Option<String>,
+    trailing_comment: Option<TrailingComment>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,7 +226,7 @@ fn format_root_entries(entries: &[Entry], options: FormatOptions) -> String {
                 out.push('\n');
             }
         }
-        out.push_str(&format_entry(entry, 0, options));
+        out.push_str(&format_entry(entry, 0, false, options));
     }
     out.push('\n');
     out
@@ -269,11 +274,9 @@ fn format_object_multiline(object: &ObjectValue, indent: usize, options: FormatO
             out.push('\n');
         }
         let entry_indent = indent + 2;
+        let add_comma = should_add_comma_for_item(index, &value_indices, options.comma_style);
         out.push_str(&" ".repeat(entry_indent));
-        out.push_str(&format_entry(entry, entry_indent, options));
-        if should_add_comma_for_item(index, &value_indices, options.comma_style) {
-            out.push(',');
-        }
+        out.push_str(&format_entry(entry, entry_indent, add_comma, options));
     }
     out.push('\n');
     out.push_str(&" ".repeat(indent));
@@ -332,22 +335,9 @@ fn format_array_multiline(array: &ArrayValue, indent: usize, options: FormatOpti
             out.push('\n');
         }
         let item_indent = indent + 2;
+        let add_comma = should_add_comma_for_item(index, &value_indices, options.comma_style);
         out.push_str(&" ".repeat(item_indent));
-        match item {
-            ArrayItem::Value {
-                value,
-                trailing_comment,
-            } => {
-                out.push_str(&format_value(value, item_indent, item_indent, options));
-                if let Some(comment) = trailing_comment {
-                    out.push_str(comment);
-                }
-                if should_add_comma_for_item(index, &value_indices, options.comma_style) {
-                    out.push(',');
-                }
-            }
-            ArrayItem::Comment(comment) => out.push_str(comment),
-        }
+        out.push_str(&format_array_item(item, item_indent, add_comma, options));
     }
     out.push('\n');
     out.push_str(&" ".repeat(indent));
@@ -372,7 +362,26 @@ fn format_array_inline(array: &ArrayValue, options: FormatOptions) -> Option<Str
     }
 }
 
-fn format_entry(entry: &Entry, indent: usize, options: FormatOptions) -> String {
+fn format_array_item(
+    item: &ArrayItem,
+    indent: usize,
+    add_comma: bool,
+    options: FormatOptions,
+) -> String {
+    match item {
+        ArrayItem::Value {
+            value,
+            trailing_comment,
+        } => {
+            let mut out = format_value(value, indent, indent, options);
+            push_trailing_comment(&mut out, trailing_comment.as_ref(), add_comma);
+            out
+        }
+        ArrayItem::Comment(comment) => comment.clone(),
+    }
+}
+
+fn format_entry(entry: &Entry, indent: usize, add_comma: bool, options: FormatOptions) -> String {
     match entry {
         Entry::Field(field) => {
             let operator = match field.op {
@@ -387,19 +396,32 @@ fn format_entry(entry: &Entry, indent: usize, options: FormatOptions) -> String 
                 indent + text_width(&prefix),
                 options,
             ));
-            if let Some(comment) = &field.trailing_comment {
-                out.push_str(comment);
-            }
+            push_trailing_comment(&mut out, field.trailing_comment.as_ref(), add_comma);
             out
         }
         Entry::Include(include) => {
             let mut out = format_include(&include.include);
-            if let Some(comment) = &include.trailing_comment {
-                out.push_str(comment);
-            }
+            push_trailing_comment(&mut out, include.trailing_comment.as_ref(), add_comma);
             out
         }
         Entry::Comment(comment) => comment.clone(),
+    }
+}
+
+fn push_trailing_comment(
+    out: &mut String,
+    trailing_comment: Option<&TrailingComment>,
+    add_comma: bool,
+) {
+    match trailing_comment {
+        Some(comment) => {
+            if add_comma {
+                out.push(',');
+            }
+            out.push_str(&comment.text);
+        }
+        None if add_comma => out.push(','),
+        None => {}
     }
 }
 
@@ -1353,7 +1375,7 @@ impl<'a> Parser<'a> {
         let mut state = SeparatorState::Start;
 
         loop {
-            let _ = self.consume_inline_whitespace();
+            let ws = self.consume_inline_whitespace();
 
             if self.peek_char() == Some(',') {
                 if state != SeparatorState::Start {
@@ -1365,15 +1387,23 @@ impl<'a> Parser<'a> {
             }
 
             if self.starts_comment() {
-                entries.push(Entry::Comment(self.consume_comment_text()));
+                let comment = self.consume_comment_text();
+                if state == SeparatorState::SawComma {
+                    Self::attach_trailing_comment_to_entry(
+                        entries.last_mut().unwrap(),
+                        TrailingComment {
+                            text: format!("{}{}", ws, comment),
+                        },
+                    );
+                } else {
+                    entries.push(Entry::Comment(comment));
+                }
                 continue;
             }
 
             if self.peek_char() == Some('\n') {
                 self.pos += 1;
-                if state == SeparatorState::Start {
-                    state = SeparatorState::SawNewline;
-                }
+                state = SeparatorState::SawNewline;
                 continue;
             }
 
@@ -1390,7 +1420,7 @@ impl<'a> Parser<'a> {
         let mut state = SeparatorState::Start;
 
         loop {
-            let _ = self.consume_inline_whitespace();
+            let ws = self.consume_inline_whitespace();
 
             if self.peek_char() == Some(',') {
                 if state != SeparatorState::Start {
@@ -1402,15 +1432,23 @@ impl<'a> Parser<'a> {
             }
 
             if self.starts_comment() {
-                items.push(ArrayItem::Comment(self.consume_comment_text()));
+                let comment = self.consume_comment_text();
+                if state == SeparatorState::SawComma {
+                    Self::attach_trailing_comment_to_array_item(
+                        items.last_mut().unwrap(),
+                        TrailingComment {
+                            text: format!("{}{}", ws, comment),
+                        },
+                    );
+                } else {
+                    items.push(ArrayItem::Comment(comment));
+                }
                 continue;
             }
 
             if self.peek_char() == Some('\n') {
                 self.pos += 1;
-                if state == SeparatorState::Start {
-                    state = SeparatorState::SawNewline;
-                }
+                state = SeparatorState::SawNewline;
                 continue;
             }
 
@@ -1448,17 +1486,19 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn consume_inline_comment_suffix(&mut self) -> Option<String> {
+    fn consume_inline_comment_suffix(&mut self) -> Option<TrailingComment> {
         let before = self.pos;
         let ws = self.consume_inline_whitespace();
         if self.starts_comment() {
-            return Some(format!("{}{}", ws, self.consume_comment_text()));
+            return Some(TrailingComment {
+                text: format!("{}{}", ws, self.consume_comment_text()),
+            });
         }
         self.pos = before;
         None
     }
 
-    fn attach_trailing_comment_to_entry(entry: &mut Entry, comment: String) {
+    fn attach_trailing_comment_to_entry(entry: &mut Entry, comment: TrailingComment) {
         match entry {
             Entry::Field(field) => field.trailing_comment = Some(comment),
             Entry::Include(include) => include.trailing_comment = Some(comment),
@@ -1466,7 +1506,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn attach_trailing_comment_to_array_item(item: &mut ArrayItem, comment: String) {
+    fn attach_trailing_comment_to_array_item(item: &mut ArrayItem, comment: TrailingComment) {
         match item {
             ArrayItem::Value {
                 trailing_comment, ..

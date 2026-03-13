@@ -215,6 +215,38 @@ fn preserves_inline_comments_on_same_line() {
 }
 
 #[test]
+fn preserves_inline_comments_after_commas() {
+    assert_formats("default/inline_comments_after_commas");
+}
+
+#[test]
+fn preserves_newline_comments_after_commas() {
+    assert_formats("default/newline_comments_after_commas");
+}
+
+#[test]
+fn places_commas_before_inline_comments_when_enabled() {
+    assert_formats_with_options(
+        "options/commas_before_inline_comments",
+        FormatOptions {
+            comma_style: CommaStyle::Commas,
+            max_width: 80,
+        },
+    );
+}
+
+#[test]
+fn keeps_newline_comments_standalone_when_commas_enabled() {
+    assert_formats_with_options(
+        "options/newline_comments_standalone_with_commas",
+        FormatOptions {
+            comma_style: CommaStyle::Commas,
+            max_width: 80,
+        },
+    );
+}
+
+#[test]
 fn ported_lightbend_fixture_inventory_is_present() {
     assert_eq!(PORTED_EQUIV_CASES.len(), 15);
     assert_eq!(PORTED_REFERENCE_FIXTURES.len(), 5);
