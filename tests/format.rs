@@ -151,7 +151,7 @@ fn does_not_add_commas_to_implicit_root_entries() {
 }
 
 #[test]
-fn limits_root_separation_to_one_blank_line() {
+fn compresses_root_level_blank_lines_to_one_blank_line() {
     assert_formats("root_separation");
 }
 
@@ -168,6 +168,11 @@ fn preserves_root_level_comments() {
 #[test]
 fn preserves_blank_lines_before_root_level_comments() {
     assert_formats("root_level_blank_line_before_comment");
+}
+
+#[test]
+fn preserves_blank_lines_after_root_level_comments() {
+    assert_formats("root_level_blank_line_after_comment");
 }
 
 #[test]

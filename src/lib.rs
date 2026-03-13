@@ -117,12 +117,14 @@ struct StandaloneComment {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct IncludeStmt {
+    leading_blank_line: bool,
     include: Include,
     trailing_comment: Option<TrailingComment>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Field {
+    leading_blank_line: bool,
     path: Vec<String>,
     op: FieldOp,
     value: Value,
@@ -223,48 +225,27 @@ impl Document {
 }
 
 fn format_root_entries(entries: &[Entry], options: FormatOptions) -> String {
-    let formatted_entries: Vec<String> = entries
-        .iter()
-        .map(|entry| format_entry(entry, 0, false, options))
-        .collect();
-
     let mut out = String::new();
-    for (index, (entry, formatted_entry)) in
-        entries.iter().zip(formatted_entries.iter()).enumerate()
-    {
+    for (index, entry) in entries.iter().enumerate() {
         if index > 0 {
-            if should_insert_blank_line_between_root_entries(
-                &entries[index - 1],
-                entry,
-                &formatted_entries[index - 1],
-            ) {
+            if entry_has_leading_blank_line(entry) {
                 out.push_str("\n\n");
             } else {
                 out.push('\n');
             }
         }
-        out.push_str(formatted_entry);
+        out.push_str(&format_entry(entry, 0, false, options));
     }
     out.push('\n');
     out
 }
 
-fn should_insert_blank_line_between_root_entries(
-    previous: &Entry,
-    current: &Entry,
-    previous_formatted: &str,
-) -> bool {
-    if let Entry::Comment(comment) = current {
-        return comment.leading_blank_line
-            || (!matches!(previous, Entry::Comment(_) | Entry::Include(_))
-                && previous_formatted.contains('\n'));
+fn entry_has_leading_blank_line(entry: &Entry) -> bool {
+    match entry {
+        Entry::Field(field) => field.leading_blank_line,
+        Entry::Include(include) => include.leading_blank_line,
+        Entry::Comment(comment) => comment.leading_blank_line,
     }
-
-    let prev_non_comment = !matches!(previous, Entry::Comment(_));
-    let current_non_comment = !matches!(current, Entry::Comment(_));
-    prev_non_comment
-        && current_non_comment
-        && !(matches!(previous, Entry::Include(_)) && matches!(current, Entry::Include(_)))
 }
 
 fn format_object(
@@ -727,6 +708,12 @@ enum SeparatorState {
     SawCommaThenNewline,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct EntrySeparator {
+    had_separator: bool,
+    leading_blank_line: bool,
+}
+
 impl<'a> Parser<'a> {
     fn new(input: &'a str) -> Self {
         Self { input, pos: 0 }
@@ -777,8 +764,10 @@ impl<'a> Parser<'a> {
         self.skip_layout_without_comments();
 
         let mut entries = Vec::new();
+        let mut leading_blank_line = false;
         loop {
-            self.collect_standalone_comments_into_entries(&mut entries);
+            leading_blank_line =
+                self.collect_standalone_comments_into_entries(&mut entries, leading_blank_line);
 
             if terminator.is_none() && self.peek_char() == Some('}') {
                 return Err(self.error("unexpected closing '}' in implicit root object"));
@@ -788,7 +777,9 @@ impl<'a> Parser<'a> {
                 break;
             }
 
-            entries.push(self.parse_entry()?);
+            let mut entry = self.parse_entry()?;
+            Self::set_entry_leading_blank_line(&mut entry, leading_blank_line);
+            entries.push(entry);
             if let Some(comment) = self.consume_inline_comment_suffix() {
                 Self::attach_trailing_comment_to_entry(entries.last_mut().unwrap(), comment);
             }
@@ -797,14 +788,15 @@ impl<'a> Parser<'a> {
                 break;
             }
 
-            let had_separator = self.consume_body_separator_into_entries(&mut entries)?;
+            let separator = self.consume_body_separator_into_entries(&mut entries)?;
+            leading_blank_line = separator.leading_blank_line;
             if terminator.is_none() && self.peek_char() == Some('}') {
                 return Err(self.error("unexpected closing '}' in implicit root object"));
             }
             if self.is_object_end(terminator) {
                 break;
             }
-            if !had_separator {
+            if !separator.had_separator {
                 return Err(self.error("expected a comma or newline between object entries"));
             }
         }
@@ -861,10 +853,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_entry(&mut self) -> Result<Entry, ParseError> {
-        self.skip_layout_without_comments();
-
         if self.starts_include_statement() {
             Ok(Entry::Include(IncludeStmt {
+                leading_blank_line: false,
                 include: self.parse_include()?,
                 trailing_comment: None,
             }))
@@ -895,6 +886,7 @@ impl<'a> Parser<'a> {
 
         let value = self.parse_value()?;
         Ok(Field {
+            leading_blank_line: false,
             path,
             op,
             value,
@@ -1407,7 +1399,7 @@ impl<'a> Parser<'a> {
     fn consume_body_separator_into_entries(
         &mut self,
         entries: &mut Vec<Entry>,
-    ) -> Result<bool, ParseError> {
+    ) -> Result<EntrySeparator, ParseError> {
         let mut state = SeparatorState::Start;
         let mut newline_count = 0;
 
@@ -1460,7 +1452,10 @@ impl<'a> Parser<'a> {
             break;
         }
 
-        Ok(state != SeparatorState::Start)
+        Ok(EntrySeparator {
+            had_separator: state != SeparatorState::Start,
+            leading_blank_line: newline_count > 1,
+        })
     }
 
     fn consume_body_separator_into_array_items(
@@ -1522,16 +1517,21 @@ impl<'a> Parser<'a> {
         Ok(state != SeparatorState::Start)
     }
 
-    fn collect_standalone_comments_into_entries(&mut self, entries: &mut Vec<Entry>) {
+    fn collect_standalone_comments_into_entries(
+        &mut self,
+        entries: &mut Vec<Entry>,
+        mut leading_blank_line: bool,
+    ) -> bool {
         loop {
-            let leading_blank_line = self.consume_layout_without_comments() > 1;
+            leading_blank_line |= self.consume_layout_without_comments() > 1;
             if !self.starts_comment() {
-                break;
+                return leading_blank_line;
             }
             entries.push(Entry::Comment(StandaloneComment {
                 text: self.consume_comment_text(),
                 leading_blank_line,
             }));
+            leading_blank_line = false;
         }
     }
 
@@ -1565,6 +1565,14 @@ impl<'a> Parser<'a> {
             Entry::Field(field) => field.trailing_comment = Some(comment),
             Entry::Include(include) => include.trailing_comment = Some(comment),
             Entry::Comment(_) => {}
+        }
+    }
+
+    fn set_entry_leading_blank_line(entry: &mut Entry, leading_blank_line: bool) {
+        match entry {
+            Entry::Field(field) => field.leading_blank_line = leading_blank_line,
+            Entry::Include(include) => include.leading_blank_line = leading_blank_line,
+            Entry::Comment(comment) => comment.leading_blank_line = leading_blank_line,
         }
     }
 
