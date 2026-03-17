@@ -607,8 +607,10 @@ fn format_value(
             }
 
             let mut out = String::new();
-            for item in items {
-                out.push_str(&item.separator);
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 && !item.separator.is_empty() {
+                    out.push(' ');
+                }
                 let part_column = current_column_after(current_column, &out);
                 out.push_str(&format_value_part(&item.part, indent, part_column, options));
             }
@@ -622,8 +624,10 @@ fn format_value_inline(value: &Value, options: FormatOptions) -> Option<String> 
         Value::Single(part) => format_value_part_inline(part, options),
         Value::Concat(items) => {
             let mut out = String::new();
-            for item in items {
-                out.push_str(&item.separator);
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 && !item.separator.is_empty() {
+                    out.push(' ');
+                }
                 out.push_str(&format_value_part_inline(&item.part, options)?);
             }
             Some(out)
