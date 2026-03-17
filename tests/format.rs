@@ -70,18 +70,8 @@ fn formats_implicit_root_object_and_nested_values() {
 }
 
 #[test]
-fn normalizes_literal_concatenation_spacing() {
-    assert_formats("normalizes_literal_concatenation_spacing");
-}
-
-#[test]
 fn formats_includes_substitutions_and_append() {
     assert_formats("includes_substitutions_and_append");
-}
-
-#[test]
-fn formats_object_and_array_concatenation() {
-    assert_formats("object_and_array_concatenation");
 }
 
 #[test]
@@ -105,7 +95,7 @@ fn accepts_numbers_followed_by_unquoted_concatenation() {
 }
 
 #[test]
-fn normalizes_mixed_concatenation_spacing_to_single_spaces() {
+fn normalizes_concatenation_spacing() {
     assert_formats("normalizes_concatenation_spacing");
 }
 

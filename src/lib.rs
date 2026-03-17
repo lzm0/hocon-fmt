@@ -608,7 +608,13 @@ fn format_value(
 
             let mut out = String::new();
             for (index, item) in items.iter().enumerate() {
-                if index > 0 && !item.separator.is_empty() {
+                if index > 0
+                    && should_insert_concat_space(
+                        &items[index - 1].part,
+                        &item.separator,
+                        &item.part,
+                    )
+                {
                     out.push(' ');
                 }
                 let part_column = current_column_after(current_column, &out);
@@ -625,7 +631,13 @@ fn format_value_inline(value: &Value, options: FormatOptions) -> Option<String> 
         Value::Concat(items) => {
             let mut out = String::new();
             for (index, item) in items.iter().enumerate() {
-                if index > 0 && !item.separator.is_empty() {
+                if index > 0
+                    && should_insert_concat_space(
+                        &items[index - 1].part,
+                        &item.separator,
+                        &item.part,
+                    )
+                {
                     out.push(' ');
                 }
                 out.push_str(&format_value_part_inline(&item.part, options)?);
@@ -703,6 +715,20 @@ fn format_path_segment(segment: &str, quote_include: bool) -> String {
     } else {
         quote_string(segment)
     }
+}
+
+fn should_insert_concat_space(previous: &ValuePart, separator: &str, current: &ValuePart) -> bool {
+    if !separator.is_empty() {
+        return true;
+    }
+
+    !matches!(
+        (previous, current),
+        (
+            ValuePart::Atom(Atom::Number(_)),
+            ValuePart::Atom(Atom::Unquoted(_))
+        )
+    )
 }
 
 fn is_safe_unquoted_path_segment(segment: &str) -> bool {
