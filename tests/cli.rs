@@ -246,7 +246,7 @@ fn formats_multiline_when_max_width_is_narrow() {
 
 #[test]
 fn rejects_zero_max_width() {
-    let output = run_cli(&["--max-width", "0"], Some("a:{b=1}"));
+    let output = run_cli(&["--max-width", "0"], None);
 
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8(output.stderr).unwrap();
