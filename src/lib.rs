@@ -1733,15 +1733,19 @@ fn render_multiline_string(raw: &str, indent: usize) -> String {
         .map(str::to_string)
         .collect::<Vec<_>>();
 
-    if lines.last().is_some_and(|line| is_space_or_tab_only(line)) {
+    let closing_inline_content = lines.last().is_some_and(|line| !is_space_or_tab_only(line));
+    if closing_inline_content {
+        if let Some(last_line) = lines.last_mut() {
+            *last_line = last_line.trim_end_matches([' ', '\t']).to_string();
+        }
+    } else {
         lines.pop();
     }
 
-    if lines
-        .first()
-        .is_some_and(|line| !is_space_or_tab_only(line))
-    {
-        lines.insert(0, String::new());
+    if let Some(first_line) = lines.first_mut() {
+        if !is_space_or_tab_only(first_line) {
+            *first_line = first_line.trim_start_matches([' ', '\t']).to_string();
+        }
     }
 
     let min_content_indent = lines
@@ -1771,8 +1775,10 @@ fn render_multiline_string(raw: &str, indent: usize) -> String {
 
     let mut out = String::from("\"\"\"");
     out.push_str(&lines.join("\n"));
-    out.push('\n');
-    out.push_str(&" ".repeat(indent));
+    if !closing_inline_content {
+        out.push('\n');
+        out.push_str(&" ".repeat(indent));
+    }
     out.push_str("\"\"\"");
     out
 }
