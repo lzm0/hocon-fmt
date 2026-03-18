@@ -65,6 +65,21 @@ fn assert_formats_to(input: &str, expected: &str) {
 }
 
 #[test]
+fn normalizes_crlf_newlines() {
+    assert_formats_to("a=1\r\nb=2\r\n", "a = 1\nb = 2\n");
+}
+
+#[test]
+fn normalizes_cr_only_newlines_and_preserves_comments() {
+    assert_formats_to("a=1\r// note\rb=2\r", "a = 1\n// note\nb = 2\n");
+}
+
+#[test]
+fn normalizes_mixed_newlines_and_preserves_comments() {
+    assert_formats_to("a=1\r\n// note\nb=2\r", "a = 1\n// note\nb = 2\n");
+}
+
+#[test]
 fn formats_implicit_root_object_and_nested_values() {
     assert_formats("implicit_root_object_and_nested_values");
 }

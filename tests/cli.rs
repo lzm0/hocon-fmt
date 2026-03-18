@@ -176,6 +176,25 @@ fn write_mode_formats_files_in_place() {
 }
 
 #[test]
+fn write_mode_normalizes_cr_only_line_endings() {
+    let dir = unique_temp_dir();
+    let file = dir.join("input.conf");
+    fs::write(&file, b"a=1\rb=2\r").unwrap();
+
+    let output = run_cli(&["--write", file.to_str().unwrap()], None);
+
+    assert!(output.status.success());
+    assert_eq!(fs::read_to_string(&file).unwrap(), "a = 1\nb = 2\n");
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("formatted")
+    );
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn output_mode_writes_to_a_different_file() {
     let dir = unique_temp_dir();
     let input = dir.join("input.conf");

@@ -10,17 +10,7 @@ pub struct ParseError {
 
 impl ParseError {
     fn new(input: &str, offset: usize, message: impl Into<String>) -> Self {
-        let mut line = 1;
-        let mut column = 1;
-
-        for ch in input[..offset.min(input.len())].chars() {
-            if ch == '\n' {
-                line += 1;
-                column = 1;
-            } else {
-                column += 1;
-            }
-        }
+        let (line, column) = line_column_at(input, offset);
 
         Self {
             message: message.into(),
@@ -892,7 +882,7 @@ impl<'a> Parser<'a> {
 
         Ok(ObjectValue {
             entries,
-            prefer_multiline: self.input[content_start..self.pos].contains('\n'),
+            prefer_multiline: contains_newline(&self.input[content_start..self.pos]),
         })
     }
 
@@ -936,7 +926,7 @@ impl<'a> Parser<'a> {
         self.expect_char(']')?;
         Ok(ArrayValue {
             items,
-            prefer_multiline: self.input[content_start..self.pos].contains('\n'),
+            prefer_multiline: contains_newline(&self.input[content_start..self.pos]),
         })
     }
 
@@ -1049,8 +1039,7 @@ impl<'a> Parser<'a> {
         loop {
             let before_separator = self.pos;
             let separator = self.consume_inline_whitespace();
-            if self.starts_comment() || self.peek_char() == Some('\n') || self.is_value_terminator()
-            {
+            if self.starts_comment() || self.at_newline() || self.is_value_terminator() {
                 self.pos = before_separator;
                 break;
             }
@@ -1182,7 +1171,7 @@ impl<'a> Parser<'a> {
 
             if self.peek_char() == Some('.')
                 || self.starts_comment()
-                || self.peek_char() == Some('\n')
+                || self.at_newline()
                 || self.is_path_terminator(mode)
             {
                 break;
@@ -1478,8 +1467,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            if self.peek_char() == Some('\n') {
-                self.pos += 1;
+            if self.consume_newline() {
                 newline_count += 1;
                 state = match state {
                     SeparatorState::SawComma | SeparatorState::SawCommaThenNewline => {
@@ -1532,7 +1520,7 @@ impl<'a> Parser<'a> {
     fn consume_ws_or_comment_separator(&mut self) -> bool {
         let before = self.pos;
         let _ = self.consume_inline_whitespace();
-        if self.starts_comment() || self.peek_char() == Some('\n') {
+        if self.starts_comment() || self.at_newline() {
             self.skip_ws_comments_newlines();
         }
         self.pos > before
@@ -1556,8 +1544,7 @@ impl<'a> Parser<'a> {
                 self.skip_comment();
             }
 
-            while self.peek_char() == Some('\n') {
-                self.pos += 1;
+            while self.consume_newline() {
                 let _ = self.consume_inline_whitespace();
                 if self.starts_comment() {
                     self.skip_comment();
@@ -1580,7 +1567,7 @@ impl<'a> Parser<'a> {
         }
 
         while let Some(ch) = self.peek_char() {
-            if ch == '\n' {
+            if self.at_newline() {
                 break;
             }
             self.pos += ch.len_utf8();
@@ -1603,8 +1590,7 @@ impl<'a> Parser<'a> {
         loop {
             let before = self.pos;
             let _ = self.consume_inline_whitespace();
-            while self.peek_char() == Some('\n') {
-                self.pos += 1;
+            while self.consume_newline() {
                 newline_count += 1;
                 let _ = self.consume_inline_whitespace();
             }
@@ -1679,6 +1665,28 @@ impl<'a> Parser<'a> {
 
     fn peek_nth_char(&self, offset: usize) -> Option<char> {
         self.input[self.pos..].chars().nth(offset)
+    }
+
+    fn at_newline(&self) -> bool {
+        self.newline_len().is_some()
+    }
+
+    fn consume_newline(&mut self) -> bool {
+        let Some(len) = self.newline_len() else {
+            return false;
+        };
+        self.pos += len;
+        true
+    }
+
+    fn newline_len(&self) -> Option<usize> {
+        if self.starts_with("\r\n") {
+            Some(2)
+        } else if matches!(self.peek_char(), Some(ch) if is_newline_char(ch)) {
+            Some(1)
+        } else {
+            None
+        }
     }
 
     fn is_eof(&self) -> bool {
@@ -1761,7 +1769,7 @@ fn decode_quoted_string(raw: &str) -> Result<String, ParseError> {
 }
 
 fn is_forbidden_unquoted_char(ch: char, stop_at_dot: bool) -> bool {
-    ch == '\n'
+    is_newline_char(ch)
         || ch.is_whitespace()
         || matches!(
             ch,
@@ -1787,6 +1795,37 @@ fn is_forbidden_unquoted_char(ch: char, stop_at_dot: bool) -> bool {
         || (stop_at_dot && ch == '.')
 }
 
+fn line_column_at(input: &str, offset: usize) -> (usize, usize) {
+    let mut line = 1;
+    let mut column = 1;
+    let mut chars = input[..offset.min(input.len())].chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\r' {
+            if chars.peek() == Some(&'\n') {
+                chars.next();
+            }
+            line += 1;
+            column = 1;
+        } else if ch == '\n' {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+    }
+
+    (line, column)
+}
+
+fn contains_newline(text: &str) -> bool {
+    text.chars().any(is_newline_char)
+}
+
+fn is_newline_char(ch: char) -> bool {
+    matches!(ch, '\n' | '\r')
+}
+
 fn is_inline_whitespace(ch: char) -> bool {
-    ch != '\n' && (ch.is_whitespace() || ch == '\u{feff}')
+    !is_newline_char(ch) && (ch.is_whitespace() || ch == '\u{feff}')
 }
