@@ -718,6 +718,12 @@ fn format_path_segment(segment: &str, quote_include: bool) -> String {
 }
 
 fn should_insert_concat_space(previous: &ValuePart, separator: &str, current: &ValuePart) -> bool {
+    if matches!(previous, ValuePart::Object(_) | ValuePart::Array(_))
+        || matches!(current, ValuePart::Object(_) | ValuePart::Array(_))
+    {
+        return false;
+    }
+
     if !separator.is_empty() {
         return true;
     }
