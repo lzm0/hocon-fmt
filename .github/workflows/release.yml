@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to create, for example v0.1.0
+        required: true
+      name:
+        description: Release name
+        required: false
+      target:
+        description: Git ref or SHA to tag
+        required: false
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: hoconfmt
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install cross-compilation toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
+
+      - name: Build release binaries
+        env:
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+        run: |
+          cargo build --release --locked --target x86_64-unknown-linux-gnu
+          cargo build --release --locked --target aarch64-unknown-linux-gnu
+
+      - name: Package release assets
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          mkdir -p dist
+
+          package() {
+            target="$1"
+            archive="dist/${BINARY_NAME}-${RELEASE_TAG}-${target}.tar.gz"
+            tar -C "target/${target}/release" -czf "${archive}" "${BINARY_NAME}"
+          }
+
+          package x86_64-unknown-linux-gnu
+          package aarch64-unknown-linux-gnu
+
+      - name: Create GitHub release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_NAME: ${{ inputs.name }}
+          RELEASE_TARGET: ${{ inputs.target }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          release_name="${RELEASE_NAME:-${RELEASE_TAG}}"
+          target_commitish="${RELEASE_TARGET:-${SHA}}"
+
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" dist/*.tar.gz --clobber
+          else
+            gh release create "${RELEASE_TAG}" \
+              dist/*.tar.gz \
+              --target "${target_commitish}" \
+              --title "${release_name}" \
+              --generate-notes
+          fi
