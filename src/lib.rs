@@ -231,7 +231,7 @@ impl CollectionItem for Entry {
     fn render(&self, indent: usize, add_comma: bool, options: FormatOptions) -> String {
         match self {
             Entry::Field(field) => format_field(field, indent, add_comma, options),
-            Entry::Include(include) => format_include_stmt(include, add_comma),
+            Entry::Include(include) => format_include_stmt(include, indent, add_comma),
             Entry::Comment(comment) => comment.text.clone(),
         }
     }
@@ -336,17 +336,17 @@ impl Field {
 }
 
 impl Include {
-    fn render(&self) -> String {
-        format!("include {}", self.target())
+    fn render(&self, indent: usize) -> String {
+        format!("include {}", self.target(indent))
     }
 
-    fn target(&self) -> String {
+    fn target(&self, indent: usize) -> String {
         match self {
-            Include::Bare(path) => path.raw.clone(),
-            Include::File(path) => format!("file({})", path.raw),
-            Include::Url(path) => format!("url({})", path.raw),
-            Include::Classpath(path) => format!("classpath({})", path.raw),
-            Include::Required(inner) => format!("required({})", inner.target()),
+            Include::Bare(path) => path.render(indent),
+            Include::File(path) => format!("file({})", path.render(indent)),
+            Include::Url(path) => format!("url({})", path.render(indent)),
+            Include::Classpath(path) => format!("classpath({})", path.render(indent)),
+            Include::Required(inner) => format!("required({})", inner.target(indent)),
         }
     }
 }
@@ -524,8 +524,8 @@ fn format_field_inline(field: &Field, options: FormatOptions) -> Option<String> 
     Some(out)
 }
 
-fn format_include_stmt(include: &IncludeStmt, add_comma: bool) -> String {
-    let mut out = include.include.render();
+fn format_include_stmt(include: &IncludeStmt, indent: usize, add_comma: bool) -> String {
+    let mut out = include.include.render(indent);
     push_trailing_comment(&mut out, include.trailing_comment.as_ref(), add_comma);
     out
 }
@@ -535,7 +535,7 @@ fn format_include_stmt_inline(include: &IncludeStmt) -> Option<String> {
         return None;
     }
 
-    Some(include.include.render())
+    Some(include.include.render(0))
 }
 
 fn push_trailing_comment(
@@ -646,7 +646,7 @@ fn format_value_part(
     match part {
         ValuePart::Object(object) => format_object(object, indent, current_column, options),
         ValuePart::Array(array) => format_array(array, indent, current_column, options),
-        ValuePart::Atom(atom) => format_atom(atom),
+        ValuePart::Atom(atom) => format_atom(atom, indent),
     }
 }
 
@@ -654,7 +654,7 @@ fn format_value_part_inline(part: &ValuePart, options: FormatOptions) -> Option<
     match part {
         ValuePart::Object(object) => format_object_inline(object, options),
         ValuePart::Array(array) => format_array_inline(array, options),
-        ValuePart::Atom(atom) => Some(format_atom(atom)),
+        ValuePart::Atom(atom) => Some(format_atom(atom, 0)),
     }
 }
 
@@ -669,9 +669,9 @@ fn text_width(text: &str) -> usize {
     text.chars().count()
 }
 
-fn format_atom(atom: &Atom) -> String {
+fn format_atom(atom: &Atom, indent: usize) -> String {
     match atom {
-        Atom::String(literal) => literal.raw.clone(),
+        Atom::String(literal) => literal.render(indent),
         Atom::Number(number) | Atom::Boolean(number) | Atom::Unquoted(number) => number.clone(),
         Atom::Null => "null".to_string(),
         Atom::Substitution(substitution) => {
@@ -1705,6 +1705,14 @@ impl StringLiteral {
         }
         decode_quoted_string(&self.raw)
     }
+
+    fn render(&self, indent: usize) -> String {
+        if !self.raw.starts_with("\"\"\"") {
+            return self.raw.clone();
+        }
+
+        render_multiline_string(&self.raw, indent)
+    }
 }
 
 fn decode_multiline_string(raw: &str) -> String {
@@ -1712,6 +1720,94 @@ fn decode_multiline_string(raw: &str) -> String {
     let mut out = raw[3..raw.len() - trailing_quotes].to_string();
     out.push_str(&"\"".repeat(trailing_quotes.saturating_sub(3)));
     out
+}
+
+fn render_multiline_string(raw: &str, indent: usize) -> String {
+    let Some(body) = multiline_string_body_for_block_render(raw) else {
+        return raw.to_string();
+    };
+
+    let normalized_body = body.replace("\r\n", "\n").replace('\r', "\n");
+    let mut lines = normalized_body
+        .split('\n')
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+    if lines.last().is_some_and(|line| is_space_or_tab_only(line)) {
+        lines.pop();
+    }
+
+    if lines
+        .first()
+        .is_some_and(|line| !is_space_or_tab_only(line))
+    {
+        lines.insert(0, String::new());
+    }
+
+    let min_content_indent = lines
+        .iter()
+        .skip(1)
+        .filter_map(|line| {
+            let leading_spaces = leading_space_count(line);
+            if line[leading_spaces..].is_empty() {
+                None
+            } else {
+                Some(leading_spaces)
+            }
+        })
+        .min();
+
+    for line in lines.iter_mut().skip(1) {
+        let leading_spaces = leading_space_count(line);
+        if line[leading_spaces..].is_empty() {
+            continue;
+        }
+
+        let min_content_indent = min_content_indent.unwrap_or(leading_spaces);
+        let normalized_indent = indent + 2 + leading_spaces - min_content_indent;
+        let trimmed = &line[leading_spaces..];
+        *line = format!("{}{}", " ".repeat(normalized_indent), trimmed);
+    }
+
+    let mut out = String::from("\"\"\"");
+    out.push_str(&lines.join("\n"));
+    out.push('\n');
+    out.push_str(&" ".repeat(indent));
+    out.push_str("\"\"\"");
+    out
+}
+
+fn multiline_string_body_for_block_render(raw: &str) -> Option<&str> {
+    if !raw.starts_with("\"\"\"") || !contains_newline(raw) {
+        return None;
+    }
+
+    let trailing_quotes = raw.chars().rev().take_while(|ch| *ch == '"').count();
+    if trailing_quotes != 3 {
+        return None;
+    }
+
+    let body = &raw[3..raw.len() - trailing_quotes];
+    let (leading_line, trailing_line) = split_first_and_last_line(body)?;
+    if !is_space_or_tab_only(leading_line) && !is_space_or_tab_only(trailing_line) {
+        return None;
+    }
+
+    Some(body)
+}
+
+fn split_first_and_last_line(text: &str) -> Option<(&str, &str)> {
+    let first_newline = text.find(is_newline_char)?;
+    let last_newline = text.rfind(is_newline_char)?;
+    Some((&text[..first_newline], &text[last_newline + 1..]))
+}
+
+fn leading_space_count(text: &str) -> usize {
+    text.chars().take_while(|ch| *ch == ' ').count()
+}
+
+fn is_space_or_tab_only(text: &str) -> bool {
+    text.chars().all(|ch| ch == ' ' || ch == '\t')
 }
 
 fn decode_quoted_string(raw: &str) -> Result<String, ParseError> {

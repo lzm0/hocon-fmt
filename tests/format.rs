@@ -80,6 +80,11 @@ fn normalizes_mixed_newlines_and_preserves_comments() {
 }
 
 #[test]
+fn normalizes_block_multiline_strings() {
+    assert_formats("normalizes_block_multiline_strings");
+}
+
+#[test]
 fn formats_implicit_root_object_and_nested_values() {
     assert_formats("implicit_root_object_and_nested_values");
 }
