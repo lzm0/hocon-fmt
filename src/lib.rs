@@ -591,6 +591,7 @@ fn format_value(
     match value {
         Value::Single(part) => format_value_part(part, indent, current_column, options),
         Value::Concat(items) => {
+            let concat_kind = inferred_concat_kind(items);
             if let Some(inline) = format_value_inline(value, options) {
                 if current_column + text_width(&inline) <= options.max_width {
                     return inline;
@@ -601,6 +602,7 @@ fn format_value(
             for (index, item) in items.iter().enumerate() {
                 if index > 0
                     && should_insert_concat_space(
+                        concat_kind,
                         &items[index - 1].part,
                         &item.separator,
                         &item.part,
@@ -620,10 +622,12 @@ fn format_value_inline(value: &Value, options: FormatOptions) -> Option<String> 
     match value {
         Value::Single(part) => format_value_part_inline(part, options),
         Value::Concat(items) => {
+            let concat_kind = inferred_concat_kind(items);
             let mut out = String::new();
             for (index, item) in items.iter().enumerate() {
                 if index > 0
                     && should_insert_concat_space(
+                        concat_kind,
                         &items[index - 1].part,
                         &item.separator,
                         &item.part,
@@ -708,10 +712,13 @@ fn format_path_segment(segment: &str, quote_include: bool) -> String {
     }
 }
 
-fn should_insert_concat_space(previous: &ValuePart, separator: &str, current: &ValuePart) -> bool {
-    if matches!(previous, ValuePart::Object(_) | ValuePart::Array(_))
-        || matches!(current, ValuePart::Object(_) | ValuePart::Array(_))
-    {
+fn should_insert_concat_space(
+    concat_kind: Option<ConcatKind>,
+    previous: &ValuePart,
+    separator: &str,
+    current: &ValuePart,
+) -> bool {
+    if matches!(concat_kind, Some(ConcatKind::Array | ConcatKind::Object)) {
         return false;
     }
 
@@ -726,6 +733,12 @@ fn should_insert_concat_space(previous: &ValuePart, separator: &str, current: &V
             ValuePart::Atom(Atom::Unquoted(_))
         )
     )
+}
+
+fn inferred_concat_kind(items: &[ConcatItem]) -> Option<ConcatKind> {
+    items
+        .iter()
+        .find_map(|item| classify_value_part_for_concat(&item.part))
 }
 
 fn is_safe_unquoted_path_segment(segment: &str) -> bool {

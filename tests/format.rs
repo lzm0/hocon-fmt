@@ -120,6 +120,11 @@ fn normalizes_concatenation_spacing() {
 }
 
 #[test]
+fn strips_non_simple_concatenation_spacing() {
+    assert_formats("strips_non_simple_concatenation_spacing");
+}
+
+#[test]
 fn preserves_explicit_root_object() {
     assert_formats("explicit_root_object");
 }
