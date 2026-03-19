@@ -206,6 +206,22 @@ fn preserves_inline_comments_on_same_line() {
 }
 
 #[test]
+fn normalizes_inline_comment_spacing() {
+    assert_formats("normalizes_inline_comment_spacing");
+}
+
+#[test]
+fn normalizes_inline_comment_spacing_with_commas() {
+    assert_formats_with_options(
+        "normalizes_inline_comment_spacing_with_commas",
+        FormatOptions {
+            comma_style: CommaStyle::Commas,
+            max_width: 80,
+        },
+    );
+}
+
+#[test]
 fn preserves_inline_comments_after_commas() {
     assert_formats("inline_comments_after_commas");
 }

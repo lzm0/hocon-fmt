@@ -548,7 +548,8 @@ fn push_trailing_comment(
             if add_comma {
                 out.push(',');
             }
-            out.push_str(&comment.text);
+            out.push(' ');
+            out.push_str(comment.text.trim_start_matches(is_inline_whitespace));
         }
         None if add_comma => out.push(','),
         None => {}
