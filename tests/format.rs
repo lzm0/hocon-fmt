@@ -120,6 +120,11 @@ fn normalizes_concatenation_spacing() {
 }
 
 #[test]
+fn preserves_adjacent_quoted_string_concatenation() {
+    assert_formats("preserves_adjacent_quoted_string_concatenation");
+}
+
+#[test]
 fn strips_non_simple_concatenation_spacing() {
     assert_formats("strips_non_simple_concatenation_spacing");
 }

@@ -600,14 +600,7 @@ fn format_value(
 
             let mut out = String::new();
             for (index, item) in items.iter().enumerate() {
-                if index > 0
-                    && should_insert_concat_space(
-                        concat_kind,
-                        &items[index - 1].part,
-                        &item.separator,
-                        &item.part,
-                    )
-                {
+                if index > 0 && should_insert_concat_space(concat_kind, &item.separator) {
                     out.push(' ');
                 }
                 let part_column = current_column_after(current_column, &out);
@@ -625,14 +618,7 @@ fn format_value_inline(value: &Value, options: FormatOptions) -> Option<String> 
             let concat_kind = inferred_concat_kind(items);
             let mut out = String::new();
             for (index, item) in items.iter().enumerate() {
-                if index > 0
-                    && should_insert_concat_space(
-                        concat_kind,
-                        &items[index - 1].part,
-                        &item.separator,
-                        &item.part,
-                    )
-                {
+                if index > 0 && should_insert_concat_space(concat_kind, &item.separator) {
                     out.push(' ');
                 }
                 out.push_str(&format_value_part_inline(&item.part, options)?);
@@ -712,27 +698,12 @@ fn format_path_segment(segment: &str, quote_include: bool) -> String {
     }
 }
 
-fn should_insert_concat_space(
-    concat_kind: Option<ConcatKind>,
-    previous: &ValuePart,
-    separator: &str,
-    current: &ValuePart,
-) -> bool {
+fn should_insert_concat_space(concat_kind: Option<ConcatKind>, separator: &str) -> bool {
     if matches!(concat_kind, Some(ConcatKind::Array | ConcatKind::Object)) {
         return false;
     }
 
-    if !separator.is_empty() {
-        return true;
-    }
-
-    !matches!(
-        (previous, current),
-        (
-            ValuePart::Atom(Atom::Number(_)),
-            ValuePart::Atom(Atom::Unquoted(_))
-        )
-    )
+    !separator.is_empty()
 }
 
 fn inferred_concat_kind(items: &[ConcatItem]) -> Option<ConcatKind> {
