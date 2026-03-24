@@ -21,59 +21,137 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            archive_extension: tar.gz
+            binary_extension: ""
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            archive_extension: tar.gz
+            binary_extension: ""
+          - os: macos-26-intel
+            target: x86_64-apple-darwin
+            archive_extension: tar.gz
+            binary_extension: ""
+          - os: macos-26
+            target: aarch64-apple-darwin
+            archive_extension: tar.gz
+            binary_extension: ""
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            archive_extension: zip
+            binary_extension: .exe
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            archive_extension: zip
+            binary_extension: .exe
 
     steps:
       - name: Check out source
         uses: actions/checkout@v6
 
-      - name: Install cross-compilation toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
-
-      - name: Build release binaries
+      - name: Install Rust target
+        shell: bash
+        run: rustup target add $target
         env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-        run: |
-          cargo build --release --locked --target x86_64-unknown-linux-gnu
-          cargo build --release --locked --target aarch64-unknown-linux-gnu
+          target: ${{ matrix.target }}
 
-      - name: Package release assets
+      - name: Build release binary
+        shell: bash
+        run: cargo build --release --locked --target $target
+        env:
+          target: ${{ matrix.target }}
+
+      - name: Package Unix release asset
+        if: runner.os != 'Windows'
         env:
           RELEASE_TAG: ${{ inputs.tag }}
+          target: ${{ matrix.target }}
+          archive_extension: ${{ matrix.archive_extension }}
         run: |
           mkdir -p dist
+          archive="dist/${BINARY_NAME}-${RELEASE_TAG}-${target}.${archive_extension}"
+          tar -C "target/${target}/release" -czf "${archive}" "${BINARY_NAME}"
 
-          package() {
-            target="$1"
-            archive="dist/${BINARY_NAME}-${RELEASE_TAG}-${target}.tar.gz"
-            tar -C "target/${target}/release" -czf "${archive}" "${BINARY_NAME}"
-          }
+      - name: Package Windows release asset
+        if: runner.os == 'Windows'
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          target: ${{ matrix.target }}
+          archive_extension: ${{ matrix.archive_extension }}
+          binary_extension: ${{ matrix.binary_extension }}
+        run: |
+          $distDir = Join-Path $PWD "dist"
+          $packageDir = Join-Path $PWD "package"
+          $binaryPath = "target/$env:target/release/$env:BINARY_NAME$env:binary_extension"
+          $archive = Join-Path $distDir "$env:BINARY_NAME-$env:RELEASE_TAG-$env:target.$env:archive_extension"
 
-          package x86_64-unknown-linux-gnu
-          package aarch64-unknown-linux-gnu
+          New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+          Remove-Item -Recurse -Force $packageDir -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+          Copy-Item $binaryPath -Destination $packageDir
+
+          Push-Location $packageDir
+          Compress-Archive -Path "$env:BINARY_NAME$env:binary_extension" -DestinationPath $archive -Force
+          Pop-Location
+
+          Remove-Item -Recurse -Force $packageDir
+
+      - name: Upload packaged asset
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Download packaged assets
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
 
       - name: Create GitHub release and upload assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ inputs.tag }}
           RELEASE_NAME: ${{ inputs.name }}
           RELEASE_TARGET: ${{ inputs.target }}
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          shopt -s nullglob
+
+          assets=(dist/*)
+
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "No release assets were produced." >&2
+            exit 1
+          fi
 
           release_name="${RELEASE_NAME:-${RELEASE_TAG}}"
           target_commitish="${RELEASE_TARGET:-${SHA}}"
 
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            gh release upload "${RELEASE_TAG}" dist/*.tar.gz --clobber
+            gh release upload "${RELEASE_TAG}" "${assets[@]}" --clobber
           else
             gh release create "${RELEASE_TAG}" \
-              dist/*.tar.gz \
+              "${assets[@]}" \
               --target "${target_commitish}" \
               --title "${release_name}" \
               --generate-notes
