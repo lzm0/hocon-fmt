@@ -82,7 +82,7 @@ jobs:
 
       - name: Package Windows release asset
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: bash
         env:
           RELEASE_TAG: ${{ inputs.tag }}
           target: ${{ matrix.target }}
