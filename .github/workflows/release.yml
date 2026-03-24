@@ -59,6 +59,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Install Rust target
+        shell: bash
         run: rustup target add $target
         env:
           target: ${{ matrix.target }}
@@ -89,8 +90,8 @@ jobs:
         run: |
           $distDir = Join-Path $PWD "dist"
           $packageDir = Join-Path $PWD "package"
-          $binaryPath = "target/${target}/release/$env:BINARY_NAME${binary_extension}"
-          $archive = Join-Path $distDir "$env:BINARY_NAME-$env:RELEASE_TAG-${target}.${archive_extension}"
+          $binaryPath = "target/${target}/release/$env:BINARY_NAME$env:binary_extension"
+          $archive = Join-Path $distDir "$env:BINARY_NAME-$env:RELEASE_TAG-$env:target.$env:archive_extension"
 
           New-Item -ItemType Directory -Force -Path $distDir | Out-Null
           Remove-Item -Recurse -Force $packageDir -ErrorAction SilentlyContinue
