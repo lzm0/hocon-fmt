@@ -72,21 +72,25 @@ jobs:
         if: runner.os != 'Windows'
         env:
           RELEASE_TAG: ${{ inputs.tag }}
+          target: ${{ matrix.target }}
+          archive_extension: ${{ matrix.archive_extension }}
         run: |
           mkdir -p dist
-          archive="dist/${BINARY_NAME}-${RELEASE_TAG}-${{ matrix.target }}.${{ matrix.archive_extension }}"
-          tar -C "target/${{ matrix.target }}/release" -czf "${archive}" "${BINARY_NAME}"
+          archive="dist/${BINARY_NAME}-${RELEASE_TAG}-${target}.${archive_extension}"
+          tar -C "target/${target}/release" -czf "${archive}" "${BINARY_NAME}"
 
       - name: Package Windows release asset
         if: runner.os == 'Windows'
         shell: pwsh
         env:
           RELEASE_TAG: ${{ inputs.tag }}
+          target: ${{ matrix.target }}
+          archive_extension: ${{ matrix.archive_extension }}
         run: |
           $distDir = Join-Path $PWD "dist"
           $packageDir = Join-Path $PWD "package"
-          $binaryPath = "target/${{ matrix.target }}/release/$env:BINARY_NAME${{ matrix.binary_extension }}"
-          $archive = Join-Path $distDir "$env:BINARY_NAME-$env:RELEASE_TAG-${{ matrix.target }}.${{ matrix.archive_extension }}"
+          $binaryPath = "target/${target}/release/$env:BINARY_NAME${binary_extension}"
+          $archive = Join-Path $distDir "$env:BINARY_NAME-$env:RELEASE_TAG-${target}.${archive_extension}"
 
           New-Item -ItemType Directory -Force -Path $distDir | Out-Null
           Remove-Item -Recurse -Force $packageDir -ErrorAction SilentlyContinue
@@ -94,7 +98,7 @@ jobs:
           Copy-Item $binaryPath -Destination $packageDir
 
           Push-Location $packageDir
-          Compress-Archive -Path "$env:BINARY_NAME${{ matrix.binary_extension }}" -DestinationPath $archive -Force
+          Compress-Archive -Path "$env:BINARY_NAME${binary_extension}" -DestinationPath $archive -Force
           Pop-Location
 
           Remove-Item -Recurse -Force $packageDir
