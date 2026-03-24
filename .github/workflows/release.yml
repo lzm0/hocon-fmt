@@ -91,7 +91,7 @@ jobs:
         run: |
           $distDir = Join-Path $PWD "dist"
           $packageDir = Join-Path $PWD "package"
-          $binaryPath = "target/${target}/release/$env:BINARY_NAME$env:binary_extension"
+          $binaryPath = "target/$env:target/release/$env:BINARY_NAME$env:binary_extension"
           $archive = Join-Path $distDir "$env:BINARY_NAME-$env:RELEASE_TAG-$env:target.$env:archive_extension"
 
           New-Item -ItemType Directory -Force -Path $distDir | Out-Null
