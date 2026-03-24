@@ -96,7 +96,7 @@ jobs:
           Remove-Item -Recurse -Force $packageDir
 
       - name: Upload packaged asset
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.target }}
           path: dist/*
