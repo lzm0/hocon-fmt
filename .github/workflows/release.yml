@@ -87,6 +87,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
           target: ${{ matrix.target }}
           archive_extension: ${{ matrix.archive_extension }}
+          binary_extension: ${{ matrix.binary_extension }}
         run: |
           $distDir = Join-Path $PWD "dist"
           $packageDir = Join-Path $PWD "package"
@@ -99,7 +100,7 @@ jobs:
           Copy-Item $binaryPath -Destination $packageDir
 
           Push-Location $packageDir
-          Compress-Archive -Path "$env:BINARY_NAME${binary_extension}" -DestinationPath $archive -Force
+          Compress-Archive -Path "$env:BINARY_NAME$env:binary_extension" -DestinationPath $archive -Force
           Pop-Location
 
           Remove-Item -Recurse -Force $packageDir
