@@ -125,6 +125,14 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          shopt -s nullglob
+
+          assets=(dist/*)
+
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "No release assets were produced." >&2
+            exit 1
+          fi
 
           release_name="${RELEASE_NAME:-${RELEASE_TAG}}"
           target_commitish="${RELEASE_TARGET:-${SHA}}"
