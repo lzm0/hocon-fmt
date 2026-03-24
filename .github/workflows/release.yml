@@ -118,6 +118,7 @@ jobs:
       - name: Create GitHub release and upload assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ inputs.tag }}
           RELEASE_NAME: ${{ inputs.name }}
           RELEASE_TARGET: ${{ inputs.target }}
