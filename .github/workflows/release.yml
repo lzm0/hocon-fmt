@@ -65,6 +65,7 @@ jobs:
           target: ${{ matrix.target }}
 
       - name: Build release binary
+        shell: bash
         run: cargo build --release --locked --target $target
         env:
           target: ${{ matrix.target }}
