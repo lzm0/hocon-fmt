@@ -14,23 +14,15 @@ This project parses and formats [HOCON](https://github.com/lightbend/config/blob
 - Supports width-aware single-line collections with `--max-width`
 - Includes ported upstream fixture tests from `lightbend/config`
 
-## Build
+## Installation
 
-```bash
-cargo build
-```
-
-Run the formatter directly with Cargo:
-
-```bash
-cargo run -- path/to/application.conf
-```
-
-Or install it locally:
+To install `hoconfmt` locally:
 
 ```bash
 cargo install --path .
 ```
+
+Alternatively, download the latest pre-built binary from https://github.com/hoconfmt/hoconfmt/releases/.
 
 ## CLI
 
